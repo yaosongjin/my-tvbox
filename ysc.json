@@ -5,7 +5,7 @@
   "sites": [
     {
       "key": "s1",
-      "name": "源A",
+      "name": "老姚的点播台",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
@@ -13,7 +13,7 @@
     },
     {
       "key": "s2",
-      "name": "源B",
+      "name": "老姚的点播台2",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
