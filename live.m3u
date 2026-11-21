@@ -1,3 +1,13 @@
 #EXTM3U x-tvg-url="https://epg.pw/xmltv/epg_CN.xml"
-#EXTINF:-1 group-title="央视",CCTV-1
-http://替换成你测过的直链/1.m3u8
+#EXTINF:-1 group-title="央视",CCTV-5+
+http://223.78.65.165:9901/tsfile/live/0006_1.m3u8?key=txiptv&playlive=1&authid=0
+#EXTINF:-1 group-title="央视",CCTV-8
+http://124.165.251.82:85/tsfile/live/0008_1.m3u8?key=txiptv&playlive=1&authid=0
+#EXTINF:-1 group-title="央视",CCTV-12
+http://124.165.251.82:85/tsfile/live/0012_1.m3u8?key=txiptv&playlive=1&authid=0
+#EXTINF:-1 group-title="央视",CCTV-13
+http://go.bkpcp.top/mg/cctv13
+#EXTINF:-1 group-title="央视",CCTV-6
+http://69.30.245.50/live/cctv6.m3u8
+#EXTINF:-1 group-title="央视",CCTV-7
+http://74.91.26.218:82/live/cctv7hd.m3u8
