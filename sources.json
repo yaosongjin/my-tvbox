@@ -1,6 +1,0 @@
-{
-  "candidates": [
-    {"name": "源A", "api": "https://a.example.com/api.php/provide/vod/"},
-    {"name": "源B", "api": "https://b.example.com/api.php/provide/vod/"}
-  ]
-}
