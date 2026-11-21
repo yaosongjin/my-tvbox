@@ -1,6 +1,6 @@
 {
   "candidates": [
-    {"name": "源A", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/"},
-    {"name": "源B", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/"}
+    {"name": "老姚的点播台", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/"},
+    {"name": "老姚的直播台", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/"}
   ]
 }
