@@ -2,7 +2,24 @@
   "key": "mybox",
   "name": "我的影视仓",
   "spider": "",
-  "sites": [],
+  "sites": [
+    {
+      "key": "s1",
+      "name": "源A",
+      "type": 1,
+      "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s2",
+      "name": "源B",
+      "type": 1,
+      "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    }
+  ],
   "parses": [],
   "lives": [
     {
