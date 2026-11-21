@@ -1,0 +1,3 @@
+#EXTM3U x-tvg-url="https://epg.pw/xmltv/epg_CN.xml"
+#EXTINF:-1 group-title="央视",CCTV-1
+http://替换成你测过的直链/1.m3u8

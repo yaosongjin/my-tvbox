@@ -1,0 +1,16 @@
+{
+  "key": "mybox",
+  "name": "我的影视仓",
+  "spider": "",
+  "sites": [],
+  "parses": [],
+  "lives": [
+    {
+      "name": "我的直播",
+      "type": 0,
+      "url": "https://gh-proxy.com/https://raw.githubusercontent.com/yaosongjin/my-tvbox/main/live.m3u",
+      "playerType": 1,
+      "epg": "https://epg.pw/xmltv/epg_CN.xml"
+    }
+  ]
+}
