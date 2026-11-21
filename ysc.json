@@ -5,7 +5,7 @@
   "sites": [
     {
       "key": "s1",
-      "name": "老姚的点播台",
+      "name": "小肥羊的点播台",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
@@ -13,7 +13,7 @@
     },
     {
       "key": "s2",
-      "name": "老姚的点播台2",
+      "name": "小肥羊的点播台2",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
