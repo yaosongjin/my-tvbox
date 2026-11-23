@@ -12,8 +12,8 @@
       "filterable": 1
     },
     {
-      "key": "s2",
-      "name": "红牛资源",
+      "key": "king",
+      "name": "不忘初心的点播台",
       "type": 1,
       "api": "https://hongniuzy2.com/api.php/provide/vod/",
       "searchable": 1,
