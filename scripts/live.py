@@ -21,6 +21,7 @@ UPSTREAMS = [
     "https://gh-proxy.com/https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
 ]
 
+# 保留的关键词（解析后粗筛，砍掉无关频道）
 KEEP = [
     "CCTV", "卫视",
     "Hunan", "Zhejiang", "Jiangsu", "Oriental", "Beijing", "Guangdong",
@@ -33,23 +34,33 @@ KEEP = [
     "浙江", "江苏", "南京", "苏州", "湖南", "湖北", "武汉",
     "山东", "青岛", "河南", "郑州", "河北", "成都", "合肥",
     "福州", "厦门", "南昌", "西安", "太原", "沈阳", "大连",
-    "长春", "哈尔滨", "昆明", "贵阳", "兰州", "南宁", "香港", "澳门", "台湾",
+    "长春", "哈尔滨", "昆明", "贵阳", "兰州", "南宁",
+    "香港", "澳门", "台湾",
 ]
 
-GROUPS = {
-    "央视频道": ["CCTV", "央视"],
-    "卫视频道": ["卫视", "Hunan", "Zhejiang", "Jiangsu", "Oriental", "Beijing",
-              "Guangdong", "Shandong", "Anhui", "Hubei", "Sichuan", "Fujian",
-              "Jiangxi", "Henan", "Hebei", "Shaanxi", "Shanxi", "Liaoning",
-              "Jilin", "Heilongjiang", "Yunnan", "Guizhou", "Gansu",
-              "Xinjiang", "Guangxi", "Hainan", "凤凰", "翡翠", "明珠"],
-    "地方台": ["北京", "上海", "天津", "重庆", "广东", "广州", "深圳",
-             "浙江", "江苏", "南京", "苏州", "湖南", "湖北", "武汉",
-             "山东", "青岛", "河南", "郑州", "河北", "成都", "合肥",
-             "福州", "厦门", "南昌", "西安", "太原", "沈阳", "大连",
-             "长春", "哈尔滨", "昆明", "贵阳", "兰州", "南宁",
-             "香港", "澳门", "台湾"],
+# 省级卫视白名单（上星综合频道）
+SATELLITE_WHITELIST = {
+    "HUNAN", "ZHEJIANG", "JIANGSU", "ORIENTAL", "BEIJING", "TIANJIN",
+    "CHONGQING", "SHANDONG", "ANHUI", "HUBEI", "SICHUAN", "GUANGDONG",
+    "SHENZHEN", "FUJIAN", "JIANGXI", "HENAN", "HEBEI", "SHAANXI",
+    "SHANXI", "LIAONING", "JILIN", "HEILONGJIANG", "YUNNAN", "GUIZHOU",
+    "GANSU", "QINGHAI", "HAINAN", "NINGXIA", "XINJIANG", "TIBET",
+    "INNERMONGOLIA", "GUANGXI", "SHANGHAI",
 }
+
+HKMO_SAT = {"PHOENIX", "FEICUI", "MINGZHU", "STAR", "TVB", "CTI"}
+
+# 地方台关键词（省市名 + 专业频道词）
+LOCAL_KEYS = [
+    "经济", "教育", "综艺", "国际", "藏语", "Economy", "Education",
+    "Variety", "International", "Tibetan",
+    "北京", "上海", "天津", "重庆", "广东", "广州", "深圳",
+    "浙江", "江苏", "南京", "苏州", "湖南", "湖北", "武汉",
+    "山东", "青岛", "河南", "郑州", "河北", "成都", "合肥",
+    "福州", "厦门", "南昌", "西安", "太原", "沈阳", "大连",
+    "长春", "哈尔滨", "昆明", "贵阳", "兰州", "南宁",
+    "香港", "澳门", "台湾",
+]
 
 
 def norm(name):
@@ -57,7 +68,7 @@ def norm(name):
 
 
 def clean_name(name):
-    """去 [xx]、去 HD/FHD/UHD/高清/超清、去括号分辨率"""
+    """去 [xx]、HD/FHD/UHD/高清/超清、括号分辨率"""
     n = re.sub(r"\[.*?\]", "", name)
     n = re.sub(r"[（(]\s*\d+[pPiI]+\s*[)）]", "", n)
     n = re.sub(r"\s*(F?U?HD|高清|超清)\s*", "", n, flags=re.I)
@@ -89,21 +100,45 @@ def parse(text):
 
 
 def match_group(name):
+    """按广电呼号规范分类：央视 / 卫视(上星综合+港澳台) / 地方台 / 其他"""
     n = norm(name)
-    for grp, kws in GROUPS.items():
-        for kw in kws:
-            if norm(kw) in n:
-                return grp
+
+    if "CCTV" in n or "央视" in name:
+        return "央视频道"
+
+    if any(k in n for k in HKMO_SAT):
+        return "卫视频道"
+
+    if "卫视" in name:
+        return "卫视频道"
+
+    # 英文：省名 + TV，且后面没有数字/专业词 → 卫视
+    if re.match(r"^[A-Z]+TV$", name.strip(), re.I) and \
+       any(s in n for s in SATELLITE_WHITELIST):
+        return "卫视频道"
+    if re.search(r"[A-Z]+SATELLITE\s*TV", n) and \
+       any(s in n for s in SATELLITE_WHITELIST):
+        return "卫视频道"
+
+    # 带数字后缀 / 经济 / 教育 / 藏语 / 综艺 → 地方台
+    for kw in LOCAL_KEYS:
+        if norm(kw) in n:
+            return "地方台"
+
     return "其他频道"
 
 
 def sort_key(name):
+    """央视 → 卫视 → 地方台 → 其他"""
     m = re.search(r"CCTV[- ]?(\d+)", name, re.I)
     if m:
         return (0, int(m.group(1)), name)
-    if "卫视" in name or any(norm(k) in norm(name) for k in GROUPS["卫视频道"]):
+    g = match_group(name)
+    if g == "卫视频道":
         return (1, 0, name)
-    return (2, 0, name)
+    if g == "地方台":
+        return (2, 0, name)
+    return (3, 0, name)
 
 
 def alive(url):
@@ -114,7 +149,8 @@ def alive(url):
         if r.status_code != 200:
             return False
         head = r.text[:512].lower()
-        for bad in ("you don't have authorization", "403 forbidden", "not found", "拒绝访问"):
+        for bad in ("you don't have authorization", "403 forbidden",
+                    "not found", "拒绝访问", "无权限"):
             if bad in head:
                 return False
         if "#extm3u" not in head:
