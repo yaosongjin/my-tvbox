@@ -5,7 +5,6 @@
     {"name": "非凡资源", "api": "https://cj.ffzyapi.com/api.php/provide/vod/"},
     {"name": "暴风资源", "api": "https://bfzyapi.com/api.php/provide/vod/"},
     {"name": "红牛资源", "api": "https://hongniuzy2.com/api.php/provide/vod/"},
-    {"name": "电影天堂", "api": "http://caiji.dyttzyapi.com/api.php/provide/vod/"},
     {"name": "极速资源", "api": "https://jszyapi.com/api.php/provide/vod/"}
   ]
 }
