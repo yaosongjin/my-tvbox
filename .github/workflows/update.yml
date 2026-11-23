@@ -1,7 +1,7 @@
 name: auto-update
 on:
   schedule:
-    - cron: '30 21 * * *'   # UTC 21:30 = 北京 05:30
+    - cron: '30 21 * * *'
   workflow_dispatch:
 jobs:
   build:
