@@ -1,7 +1,5 @@
 {
   "candidates": [
-    {"name": "芒果资源网", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/"},
-    {"name": "红牛资源", "api": "https://hongniuzy2.com/api.php/provide/vod/"},
     {"name": "极速资源", "api": "https://jszyapi.com/api.php/provide/vod/"}
   ]
 }
