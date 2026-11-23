@@ -12,7 +12,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -28,9 +28,15 @@ jobs:
       - name: update vod
         run: python scripts/update_vod.py
 
-      # 直播：失败也不影响点播；live.py 内部已有"0 可用源就保留旧文件"的兜底
+      # 直播：每条源都要做"抓两轮节目单"的终审，比点播慢，单独给足时间。
+      # GitHub 的机器在境外，能连上的国内源有限 —— 连不上时只会少几个台，
+      # 不会把没验证过的地址写进去；成片率 0 才会保留旧文件（退出码 3）。
       - name: update live
-        run: python scripts/live.py || echo "live.py failed, keep old live.m3u"
+        continue-on-error: true
+        env:
+          PER_CH_LINES: '1'
+          MIN_COVERAGE: '0.5'
+        run: python scripts/live.py
 
       - name: commit
         run: |
