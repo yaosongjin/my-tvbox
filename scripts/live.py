@@ -1,80 +1,78 @@
+import os
 import re
+import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 OUTPUT = "live.m3u"
-TIMEOUT = (5, 10)
-MAX_WORKERS = 16
-MAX_LINES = 3
-HARD_LIMIT = 300
-
-UA = {"User-Agent": "Mozilla/5.0"}
+BACKUP = "live.m3u.bak"
 UPSTREAMS = [
     "https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
     "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u",
     "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/iptv.m3u",
 ]
-
-BAD = [b"400-788", b"consultation hotline", b"consulting hotline"]
-
-def clean_name(s):
-    s = re.sub(r"\s+", "", s or "")
-    return s.strip()
-
-def norm(s):
-    return re.sub(r"[\s_\-（）()]+", "", clean_name(s)).lower()
-
-def match_group(name):
-    if re.match(r"^cctv\d", name, re.I):
-        return "央视频道"
-    if "卫视" in name:
-        return "卫视频道"
-    return "地方台"
-
-def parse(text):
-    out, name = [], ""
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("#EXTINF"):
-            m = re.search(r",(.+)$", line)
-            name = m.group(1) if m else ""
-        elif line and not line.startswith("#"):
-            out.append((name, line))
-            name = ""
-    return out
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+TIMEOUT = 4
+MAX_WORKERS = 10
+MAX_LINES = 3
+HARD_LIMIT = 600
 
 def fetch(url):
     try:
-        r = requests.get(url, timeout=TIMEOUT, headers=UA)
-        if r.status_code == 200 and "#EXTM3U" in r.text[:500].upper():
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code == 200:
             return r.text
     except Exception as e:
-        print(f"  X 拉取失败 {url} {e}")
-        return None
-    print(f"  X 拉取失败 {url}")
+        print(f"  拉取失败 {url}: {e}")
     return None
 
+def parse(text):
+    items = []
+    name = None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("#EXTINF:"):
+            m = re.search(r",(.*)$", line)
+            name = m.group(1).strip() if m else None
+        elif line and not line.startswith("#") and name:
+            items.append((name, line))
+            name = None
+    return items
+
+def clean_name(s):
+    s = re.sub(r"\s+线路\d+$", "", s).strip()
+    s = re.sub(r"[（(].*?[)）]", "", s).strip()
+    return s
+
+def norm(s):
+    return re.sub(r"[\s\-_]", "", s).lower()
+
+def match_group(name):
+    if "cctv" in name.lower():
+        return "央视频道"
+    if any(x in name for x in ["卫视", "湖南", "浙江", "江苏", "东方", "广东"]):
+        return "卫视频道"
+    return "地方台"
+
+def bad_source(url):
+    u = url.lower()
+    return any(x in u for x in ["400-", "咨询热线", "jump", "ad.", "landing"])
+
 def probe(url):
-    try:
-        r = requests.get(url, timeout=TIMEOUT, headers=UA)
-        if r.status_code != 200:
-            return False
-        text = r.text[:8192]
-        low = text.lower()
-        if b"#extm3u" not in low:
-            return False
-        if any(b in low for b in BAD):
-            return False
-        # 宽松：有分片、或 m3u 里有 #EXTINF/#EXT-X-STREAM-INF 就算入口合法
-        if re.search(r"\.ts|\.m4s|\.mp4|#EXT-X-STREAM-INF|#EXTINF", low, re.I):
-            return True
+    if bad_source(url):
         return False
+    try:
+        r = requests.get(url, headers={**HEADERS, "Range": "bytes=0-1023"}, timeout=TIMEOUT, stream=True)
+        if r.status_code not in (200, 206):
+            return False
+        head = ""
+        for chunk in r.iter_content(1024):
+            head += chunk.decode("utf-8", "ignore")
+            break
+        r.close()
+        return "#extm3u" in head.lower() or ".ts" in head.lower() or head.startswith("#")
     except Exception:
         return False
-
-def alive(url):
-    # 只测一次，不再二次连测
-    return probe(url)
 
 def preferred_rank(url):
     u = url.lower()
@@ -105,6 +103,7 @@ def main():
         seen.setdefault(k, {"cname": cn, "grp": match_group(cn), "urls": []})
         if url not in seen[k]["urls"]:
             seen[k]["urls"].append(url)
+
     cand = []
     for data in seen.values():
         for u in data["urls"][:5]:
@@ -113,16 +112,24 @@ def main():
     print(f"[候选] {len(cand)} 条")
 
     ok = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        fs = {ex.submit(alive, u): (n, u, g) for n, u, g in cand}
-        for f in as_completed(fs):
-            n, u, g = fs[f]
-            try:
-                if f.result():
-                    ok.append((n, u, g))
-            except Exception:
-                pass
+    if cand:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            fs = {ex.submit(probe, u): (n, u, g) for n, u, g in cand}
+            for f in as_completed(fs):
+                n, u, g = fs[f]
+                try:
+                    if f.result():
+                        ok.append((n, u, g))
+                except Exception:
+                    pass
     print(f"[测活通过] {len(ok)} 条")
+
+    if not ok:
+        if os.path.exists(OUTPUT):
+            print("[兜底] 测活为0，保留上次 live.m3u，不覆盖")
+        else:
+            print("[致命] 无可用源且无历史文件")
+        return
 
     by_name = {}
     for cname, url, grp in ok:
@@ -155,13 +162,14 @@ def main():
         disp = f"{base} 线路{line_no}"
         lines.append(f'#EXTINF:-1 tvg-name="{base}" group-title="{grp}",{disp}')
         lines.append(url)
+
+    if os.path.exists(OUTPUT):
+        os.replace(OUTPUT, BACKUP)
     with open(OUTPUT, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print(f"[最终频道-含线路] {len(final)} 条")
     print(f"[去重后台数] {len(by_name)} 个")
-    for cname, url, grp in final:
-        print(f"  - [{grp}] {cname}  {url}")
 
 if __name__ == "__main__":
     main()
