@@ -1,5 +1,7 @@
 {
   "candidates": [
-    {"name": "饭太硬",     "api": "http://www.饭太硬.net/tv"}
+    {"name": "芒果资源网", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/"},
+    {"name": "红牛资源", "api": "https://hongniuzy2.com/api.php/provide/vod/"},
+    {"name": "百度资源", "api": "https://api.apibdzy.com/api.php/provide/vod/"}
   ]
 }
