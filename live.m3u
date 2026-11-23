@@ -1,6 +1,22 @@
 #EXTM3U x-tvg-url="https://epg.pw/xmltv/epg_CN.xml"
 #EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-1 (720p)
 http://74.91.26.218:82/live/cctv1hd.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv2.png" group-title="央视频道",CCTV-2 (720p)
+http://74.91.26.218:82/live/cctv2hd.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv3.png" group-title="央视频道",CCTV-3 (720p)
+http://74.91.26.218:82/live/cctv3hd.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv5.png" group-title="央视频道",CCTV-5+ (1080p)
+https://php.jdshipin.com/TVOD/iptv.php?id=cctv5p
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv6.png" group-title="央视频道",CCTV-6 HD (1080p)
+http://69.30.245.50/live/cctv6.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv7.png" group-title="央视频道",CCTV-7 (720p)
+http://74.91.26.218:82/live/cctv7hd.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv8.png" group-title="央视频道",CCTV-8 (720p)
+http://74.91.26.218:82/live/cctv8hd.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv8.png" group-title="央视频道",CCTV-8K HD (1080p)
+http://192.151.150.154/live/cctv8k.m3u8
+#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv9.png" group-title="央视频道",CCTV-9 (576i)
+https://xykt-fix.github.io/Y77.m3u8
 #EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-10 (720p)
 http://74.91.26.218:82/live/cctv10hd.m3u8
 #EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-11 (720p)
@@ -15,17 +31,3 @@ http://74.91.26.218:82/live/cctv14hd.m3u8
 http://74.91.26.218:82/live/cctv15hd.m3u8
 #EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-17 HD (1080p)
 http://74.91.26.218:82/live/cctv17hd.m3u8
-#EXTINF:-1 group-title="央视频道",CCTV-2 (720p)
-http://74.91.26.218:82/live/cctv2hd.m3u8
-#EXTINF:-1 group-title="央视频道",CCTV-3 (720p)
-http://74.91.26.218:82/live/cctv3hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv6.png" group-title="央视频道",CCTV-6 HD (1080p)
-http://69.30.245.50/live/cctv6.m3u8
-#EXTINF:-1 group-title="央视频道",CCTV-7 (720p)
-http://74.91.26.218:82/live/cctv7hd.m3u8
-#EXTINF:-1 group-title="央视频道",CCTV-8 (720p)
-http://74.91.26.218:82/live/cctv8hd.m3u8
-#EXTINF:-1 group-title="央视频道",CCTV-8K HD (1080p)
-http://192.151.150.154/live/cctv8k.m3u8
-#EXTINF:-1 group-title="央视频道",CCTV-9 (576i)
-https://xykt-fix.github.io/Y77.m3u8
