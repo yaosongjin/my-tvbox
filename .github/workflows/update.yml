@@ -5,24 +5,41 @@ on:
     - cron: '30 21 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: auto-update
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - run: pip install requests --quiet
-      - run: python scripts/update_vod.py
-      - run: python scripts/live.py
+
+      # 点播：抓不到活源时会自己保留旧 ysc.json，不会写空
+      - name: update vod
+        run: python scripts/update_vod.py
+
+      # 直播：失败也不影响点播；live.py 内部已有"0 可用源就保留旧文件"的兜底
+      - name: update live
+        run: python scripts/live.py || echo "live.py failed, keep old live.m3u"
+
       - name: commit
         run: |
           git config user.name "bot"
           git config user.email "bot@bot.com"
           git add ysc.json live.m3u
-          git commit -m "auto update $(date -u +%F)" || exit 0
+          if git diff --cached --quiet; then
+            echo "no change"
+            exit 0
+          fi
+          git commit -m "auto update $(date -u +%F)"
           git push
