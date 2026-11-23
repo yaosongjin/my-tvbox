@@ -1,5 +1,5 @@
 {
   "candidates": [
-    {"name": "极速资源", "api": "https://www.jszyapi.com/api.php/provide/vod/"}
+    {"name": "极速资源", "api": "https://jszyapi.com/api.php/provide/vod/at/json/"}
   ]
 }
