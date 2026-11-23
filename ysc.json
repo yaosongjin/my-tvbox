@@ -4,16 +4,16 @@
   "spider": "",
   "sites": [
     {
-      "key": "anna",
-      "name": "小肥羊的点播台",
+      "key": "s1",
+      "name": "芒果资源网",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
       "filterable": 1
     },
     {
-      "key": "king",
-      "name": "不忘初心的点播台",
+      "key": "s2",
+      "name": "红牛资源",
       "type": 1,
       "api": "https://hongniuzy2.com/api.php/provide/vod/",
       "searchable": 1,
