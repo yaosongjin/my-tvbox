@@ -1,235 +1,252 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+生成 live.m3u —— 只保留真正能播的频道，不做任何保底。
+
+流程：
+  1. 从 UPSTREAMS 拉取原始 m3u
+  2. parse() 解析出 (name, url)
+  3. clean_name() 清洗频道名
+  4. match_group() 按广电呼号规范分组
+  5. alive() 严格测活（真拉流 + 广告黑名单）
+  6. 二次确认（隔几秒再测一次，两次都过才保留）
+  7. 写 live.m3u（严格只用测活通过的 result）
+"""
+
 import re
-import signal
+import time
 import requests
-import concurrent.futures as cf
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-OUT = "live.m3u"
-EPG = "https://epg.pw/xmltv/epg_CN.xml"
-
-TIMEOUT = (4, 8)
-HARD_LIMIT = 200
-MAX_WORKERS = 16
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-}
-
+# ================== 配置 ==================
 UPSTREAMS = [
-    "https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
-    "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/iptv.m3u",
-    "https://iptv-org.github.io/iptv/countries/cn.m3u",
+    "https://cdn.jsdelivr.net/gh/iptv-org/iptv@master/streams/cn.m3u",
+    "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/cn.m3u",
+    "https://cdn.jsdelivr.net/gh/CCarefree/IPTV@main/live.m3u",
 ]
 
-# 央视核心台保底：测活失败也写入，保证 CCTV-4/5/6 一定在
-CORE_CCTV = {
-    "CCTV-4": ["http://112.74.115.68:35455/gaoma/cctv4k.m3u8"],
-    "CCTV-5": ["http://138.2.110.209:35455/gaoma/cctv5.m3u8"],
-    "CCTV-5+": ["http://138.2.110.209:35455/gaoma/cctv5p.m3u8"],
-    "CCTV-6": ["https://stream1.freetv.fun/abb9/ott.m3u8",
-               "http://69.30.245.50/live/cctv6.m3u8"],
+OUTPUT = "live.m3u"
+
+TIMEOUT = (4, 8)          # (连接, 读取)
+MAX_WORKERS = 20          # 并发测活线程数
+HARD_LIMIT = 300          # 候选上限，防止跑太久
+SECOND_CHECK_DELAY = 3    # 二次确认前等待秒数
+
+UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0 Safari/537.36"
+    )
 }
 
-KEEP = [
-    "CCTV", "卫视",
-    "Hunan", "Zhejiang", "Jiangsu", "Oriental", "Beijing", "Guangdong",
-    "Shandong", "Anhui", "Hubei", "Sichuan", "Fujian", "Jiangxi",
-    "Henan", "Hebei", "Shaanxi", "Shanxi", "Liaoning", "Jilin",
-    "Heilongjiang", "Yunnan", "Guizhou", "Gansu", "Xinjiang",
-    "Inner Mongolia", "Guangxi", "Hainan", "Ningxia", "Qinghai", "Tibet",
-    "翡翠", "明珠", "凤凰",
-    "北京", "上海", "天津", "重庆", "广东", "广州", "深圳",
-    "浙江", "江苏", "南京", "苏州", "湖南", "湖北", "武汉",
-    "山东", "青岛", "河南", "郑州", "河北", "成都", "合肥",
-    "福州", "厦门", "南昌", "西安", "太原", "沈阳", "大连",
-    "长春", "哈尔滨", "昆明", "贵阳", "兰州", "南宁",
-    "香港", "澳门", "台湾",
+# 广告/错误页黑名单（小写字节）
+BAD_MARKERS = (
+    b"advertise", b"advert", b"jump", b"landing",
+    b"403 forbidden", b"not found",
+    b"you don't have authorization",
+    b"\xe6\x8b\x92\xe7\xbb\x9d\xe8\xae\xbf\xe9\x97\xae",  # 拒绝访问
+    b"\xe6\x97\xa0\xe6\x9d\x83\xe9\x99\x90",              # 无权限
+    b"\xe5\xb9\xbf\xe5\x91\x8a",                          # 广告
+    b"\xe8\xb7\xb3\xe8\xbd\xac",                          # 跳转
+)
+
+# ================== 频道名清洗 ==================
+_CLEAN_PATTERNS = [
+    re.compile(r"\[[^\]]*\]"),                      # [xxx]
+    re.compile(r"\([^\)]*\)"),                      # (xxx)
+    re.compile(r"\bHD\b", re.I),
+    re.compile(r"\bFHD\b", re.I),
+    re.compile(r"\bUHD\b", re.I),
+    re.compile(r"高清|超清|标清|蓝光|4K|8K", re.I),
+    re.compile(r"\b\d{3,4}[pi]\b", re.I),           # 1080p / 720i
 ]
 
-SATELLITE_WHITELIST = {
-    "HUNAN", "ZHEJIANG", "JIANGSU", "ORIENTAL", "BEIJING", "TIANJIN",
-    "CHONGQING", "SHANDONG", "ANHUI", "HUBEI", "SICHUAN", "GUANGDONG",
-    "SHENZHEN", "FUJIAN", "JIANGXI", "HENAN", "HEBEI", "SHAANXI",
-    "SHANXI", "LIAONING", "JILIN", "HEILONGJIANG", "YUNNAN", "GUIZHOU",
-    "GANSU", "QINGHAI", "HAINAN", "NINGXIA", "XINJIANG", "TIBET",
-    "INNERMONGOLIA", "GUANGXI", "SHANGHAI",
+def clean_name(name: str) -> str:
+    s = name.strip()
+    for p in _CLEAN_PATTERNS:
+        s = p.sub("", s)
+    s = re.sub(r"\s+", " ", s).strip(" -_|·")
+    return s
+
+def norm(name: str) -> str:
+    """用于去重的归一化 key"""
+    s = clean_name(name).lower()
+    s = re.sub(r"[\s\-_·|]+", "", s)
+    return s
+
+# ================== 分组规则 ==================
+# 只有这些算「卫视频道」：
+#   1. 中文名含「卫视」
+#   2. 英文 ^XX TV$ 且 XX 是省名白名单
+#   3. 港澳台指定频道
+PROVINCE_EN = {
+    "hunan", "zhejiang", "jiangsu", "anhui", "beijing", "shanghai",
+    "guangdong", "shenzhen", "tianjin", "chongqing", "shandong",
+    "henan", "hebei", "hubei", "sichuan", "fujian", "jiangxi",
+    "liaoning", "heilongjiang", "jilin", "shanxi", "shaanxi",
+    "gansu", "qinghai", "yunnan", "guizhou", "guangxi", "hainan",
+    "xinjiang", "xizang", "tibet", "ningxia", "neimenggu", "innermongolia",
 }
-HKMO_SAT = {"PHOENIX", "FEICUI", "MINGZHU", "STAR", "TVB", "CTI"}
-LOCAL_KEYS = [
-    "经济", "教育", "综艺", "国际", "藏语", "Economy", "Education",
-    "Variety", "International", "Tibetan",
-    "北京", "上海", "天津", "重庆", "广东", "广州", "深圳",
-    "浙江", "江苏", "南京", "苏州", "湖南", "湖北", "武汉",
-    "山东", "青岛", "河南", "郑州", "河北", "成都", "合肥",
-    "福州", "厦门", "南昌", "西安", "太原", "沈阳", "大连",
-    "长春", "哈尔滨", "昆明", "贵阳", "兰州", "南宁",
-    "香港", "澳门", "台湾",
-]
 
+HMT_KEYWORDS = ("凤凰", "翡翠", "明珠", "tvb", "凤凰卫视", "翡翠台", "明珠台")
 
-def norm(name):
-    return name.upper().replace(" ", "").replace("-", "").replace("_", "")
+def match_group(name: str) -> str:
+    s = clean_name(name)
+    low = s.lower()
 
-
-def clean_name(name):
-    n = re.sub(r"\[.*?\]", "", name)
-    n = re.sub(r"[（(]\s*\d+[pPiI]+\s*[)）]", "", n)
-    n = re.sub(r"\s*(F?U?HD|高清|超清)\s*", "", n, flags=re.I)
-    n = re.sub(r"\s+", " ", n).strip()
-    return n
-
-
-def fetch(url):
-    try:
-        r = requests.get(url, timeout=TIMEOUT, headers=HEADERS)
-        r.raise_for_status()
-        return r.text
-    except Exception as e:
-        print(f"[拉取失败] {url} -> {e}")
-        return ""
-
-
-def parse(text):
-    lines = [x.strip() for x in text.splitlines() if x.strip()]
-    for i, line in enumerate(lines):
-        if not line.startswith("#EXTINF"):
-            continue
-        name = line.split(",", 1)[-1].strip()
-        for j in range(i + 1, min(i + 6, len(lines))):
-            if lines[j].startswith("http"):
-                yield name, lines[j]
-                break
-
-
-def match_group(name):
-    n = norm(name)
-    if "CCTV" in n or "央视" in name:
+    if "cctv" in low or s.startswith("央视"):
         return "央视频道"
-    if any(k in n for k in HKMO_SAT):
-        return "卫视频道"
-    if "卫视" in name:
-        return "卫视频道"
-    if re.match(r"^[A-Z]+TV$", name.strip(), re.I) and \
-       any(s in n for s in SATELLITE_WHITELIST):
-        return "卫视频道"
-    if re.search(r"[A-Z]+SATELLITE\s*TV", n) and \
-       any(s in n for s in SATELLITE_WHITELIST):
-        return "卫视频道"
-    for kw in LOCAL_KEYS:
-        if norm(kw) in n:
-            return "地方台"
-    return "其他频道"
 
+    # 港澳台
+    for kw in HMT_KEYWORDS:
+        if kw in low:
+            return "卫视频道"
 
-def sort_key(name):
-    m = re.search(r"CCTV[- ]?(\d+)", name, re.I)
+    # 中文「卫视」
+    if "卫视" in s:
+        return "卫视频道"
+
+    # 英文 ^XX TV$
+    m = re.fullmatch(r"([A-Za-z ]+?)\s*TV", s)
     if m:
-        return (0, int(m.group(1)), name)
-    g = match_group(name)
-    if g == "卫视频道":
-        return (1, 0, name)
-    if g == "地方台":
-        return (2, 0, name)
-    return (3, 0, name)
+        prov = m.group(1).replace(" ", "").lower()
+        if prov in PROVINCE_EN:
+            return "卫视频道"
 
+    return "地方台"
 
-def alive(url):
-    """只判 HTTP 200 + 不是明显错误页，放宽对 m3u8 内容的要求"""
-    if not url.startswith("http"):
-        return False
+# ================== 解析 m3u ==================
+_ATTR_NAME = re.compile(r'#EXTINF:[^,]*,(.*)$', re.I)
+_ATTR_GROUP = re.compile(r'group-title="([^"]*)"', re.I)
+
+def parse(text: str):
+    """返回 [(name, url)]，跳过 #EXTVLCOPT 等指令向下找 http"""
+    out = []
+    lines = text.splitlines()
+    i = 0
+    pending_name = None
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("#EXTINF"):
+            m = _ATTR_NAME.search(line)
+            pending_name = m.group(1).strip() if m else ""
+        elif line and not line.startswith("#"):
+            if line.lower().startswith("http") and pending_name:
+                out.append((pending_name, line))
+                pending_name = None
+            # 其他非 http 行忽略
+        i += 1
+    return out
+
+# ================== 测活 ==================
+def alive(url: str) -> bool:
     try:
-        r = requests.get(url, timeout=TIMEOUT, headers=HEADERS,
-                         allow_redirects=True, stream=True)
+        r = requests.get(url, timeout=TIMEOUT, stream=True, headers=UA)
         if r.status_code != 200:
+            r.close()
             return False
-        head = r.raw.read(1024, decode_content=True).decode("utf-8", "ignore").lower()
-        r.close()
-        for bad in ("you don't have authorization", "403 forbidden",
-                    "not found", "拒绝访问", "无权限", "404"):
-            if bad in head:
+        head = b""
+        try:
+            for chunk in r.iter_content(1024):
+                head += chunk
+                if len(head) >= 1024:
+                    break
+        finally:
+            r.close()
+        low = head.lower()
+        if b"#extm3u" not in low and b".m3u8" not in low:
+            return False
+        for bad in BAD_MARKERS:
+            if bad in low:
                 return False
-        if "#extm3u" in head:
-            return True
-        # 有些源首包是 ts 段，也认为活
-        if head.startswith("\x47") or ".ts" in head:
-            return True
-        return False
+        return True
     except Exception:
         return False
 
+def alive_confirmed(url: str) -> bool:
+    """二次确认：两次都过才算活"""
+    if not alive(url):
+        return False
+    time.sleep(SECOND_CHECK_DELAY)
+    return alive(url)
 
-def _alarm(*_):
-    raise TimeoutError("hard limit reached")
-
-
-def main():
+# ================== 拉取上游 ==================
+def fetch(url: str):
     try:
-        signal.signal(signal.SIGALRM, _alarm)
-        signal.alarm(HARD_LIMIT)
+        r = requests.get(url, timeout=(6, 15), headers=UA)
+        if r.status_code == 200 and "#EXTM3U" in r.text[:200].upper():
+            return r.text
     except Exception:
         pass
+    return None
 
-    raw_pool = {}
-    for u in UPSTREAMS:
-        text = fetch(u)
-        if not text:
+# ================== 主流程 ==================
+def main():
+    raw_items = []
+    for up in UPSTREAMS:
+        print(f"[拉取] {up}")
+        txt = fetch(up)
+        if not txt:
+            print(f"  ✗ 失败")
             continue
-        for name, url in parse(text):
-            key = norm(name)
-            if key not in raw_pool:
-                raw_pool[key] = (name, url)
+        items = parse(txt)
+        print(f"  ✓ 解析 {len(items)} 条")
+        raw_items.extend(items)
 
-    print(f"解析原始 {len(raw_pool)} 个")
+    print(f"[解析原始] 共 {len(raw_items)} 条")
 
-    pool = {k: v for k, v in raw_pool.items()
-            if any(norm(w) in k for w in KEEP)}
-    print(f"粗筛后候选 {len(pool)} 个")
-    print("粗筛样本:", [clean_name(v[0]) for v in list(pool.values())[:30]])
-
-    good = {}
-    try:
-        with cf.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-            futs = {ex.submit(alive, v[1]): k for k, v in pool.items()}
-            for f in cf.as_completed(futs):
-                if f.result():
-                    good[futs[f]] = pool[futs[f]]
-    except TimeoutError:
-        print("[硬超时] 停止测活，写入已存活频道")
-    except Exception as e:
-        print(f"[测活异常] {e}")
-
-    # 央视核心台保底：测活失败也留，保证 4/5/6 在
-    for cname, urls in CORE_CCTV.items():
+    # 去重 + 清洗 + 分组
+    seen = {}
+    for name, url in raw_items:
+        cname = clean_name(name)
+        if not cname:
+            continue
         key = norm(cname)
-        if key in good:
+        if key in seen:
             continue
-        for u in urls:
-            if alive(u):
-                good[key] = (cname, u)
-                print(f"[央视保底] {cname} -> {u}")
-                break
-        else:
-            good[key] = (cname, urls[0])
-            print(f"[央视兜底-未测活] {cname} -> {urls[0]}")
+        seen[key] = (cname, url, match_group(cname))
 
-    result = sorted(good.values(), key=lambda x: sort_key(x[0]))
+    candidates = list(seen.values())
+    if len(candidates) > HARD_LIMIT:
+        candidates = candidates[:HARD_LIMIT]
+    print(f"[候选] {len(candidates)} 条（去重后）")
 
-    stat = {}
-    for name, _ in result:
-        g = match_group(name)
-        stat[g] = stat.get(g, 0) + 1
-    print("分组统计:", stat)
+    # 测活（并发）
+    result = []
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futs = {ex.submit(alive_confirmed, url): (cname, url, grp)
+                for cname, url, grp in candidates}
+        for fut in as_completed(futs):
+            cname, url, grp = futs[fut]
+            try:
+                ok = fut.result()
+            except Exception:
+                ok = False
+            if ok:
+                result.append((cname, url, grp))
 
-    with open(OUT, "w", encoding="utf-8") as fp:
-        fp.write(f'#EXTM3U x-tvg-url="{EPG}"\n')
-        for name, url in result:
-            disp = clean_name(name)
-            grp = match_group(disp)
-            fp.write(f'#EXTINF:-1 group-title="{grp}",{disp}\n{url}\n')
+    # 分组统计
+    stats = {}
+    for _, _, grp in result:
+        stats[grp] = stats.get(grp, 0) + 1
+    print(f"[分组统计] {stats}")
 
-    print(f"写入 {len(result)} 个频道到 {OUT}")
-    print("最终频道:", [clean_name(n) for n, _ in result])
+    # 排序：央视 → 卫视 → 地方台
+    order = {"央视频道": 0, "卫视频道": 1, "地方台": 2}
+    result.sort(key=lambda x: (order.get(x[2], 9), norm(x[0])))
 
+    # 写文件（严格只用 result）
+    lines = ["#EXTM3U"]
+    for cname, url, grp in result:
+        lines.append(f'#EXTINF:-1 tvg-name="{cname}" group-title="{grp}",{cname}')
+        lines.append(url)
+    with open(OUTPUT, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    print(f"[最终频道] {len(result)} 个")
+    for cname, url, grp in result:
+        print(f"  - [{grp}] {cname}  {url}")
 
 if __name__ == "__main__":
     main()
