@@ -2,7 +2,7 @@ import json, requests, hashlib, concurrent.futures as cf
 
 SRC = "config/sources.json"
 OUT = "ysc.json"
-TIMEOUT = 10
+TIMEOUT = (4,8)
 DEEP_CHECK = False   # True 时额外校验 ac=detail
 
 HEADERS = {
