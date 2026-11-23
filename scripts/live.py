@@ -17,9 +17,12 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
    地址里写着 cctv5 却标成 CCTV3 → 丢弃。这类"换台"在免费源里非常常见。
 5. 新增"终审"：间隔十几秒抓两次节目单，只有切片真的在往前滚才算在直播。广告 /
    电影循环源是固定文件（要么带 ENDLIST，要么序列不动），一律丢弃，不再留作备胎。
-6. 央视 / 卫视只接受高可信上游的源；小于 100% 的成片率不再用"降级模式"补齐 ——
-   补齐的每一格都是没验证过的地址，那正是广告进来的口子。
-7. 只依赖本文件，不需要任何额外的配置文件。
+6. 可信度只影响排序，不再一票否决：低可信上游的源只要通过终审仍然会用，但会
+   在日志里点名为 [弱源]。上一版把低可信源一律过滤，主上游一挂央视就整体清零。
+7. 上游列表会被体检：返回的条数太少、或里面一条央视都没有，就判定为失效并按最差
+   权重处理，同时打印 [上游失效]。fanmingming 的 repo 路径 2026-11 变成 404，
+   正是这条静默故障让央视整组消失的。
+8. 只依赖本文件，不需要任何额外的配置文件。
 """
 
 import os
@@ -50,22 +53,28 @@ UA = (
 HEADERS = {"User-Agent": UA, "Accept": "*/*"}
 
 # (上游地址, 可信度) 可信度数字越小越可靠
-# iptv-org 的 cn.m3u 是社区爬来的，贴错标签/换台比例很高，只能当备胎
+# 2026-11 实测：fanmingming/live 仓库里已经没有 tv/iptv.m3u 了（raw 直接 404，
+# 他的 tv/ 目录只剩台标 png），列表搬到了自己的域名 live.fanmingming.cn。
+# 所以这里同时挂多个来源，任何一个挂掉都不该让某个频道组整体消失。
 UPSTREAMS = [
-    ("https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u", 0),
-    ("https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/iptv.m3u", 0),
-    ("https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u", 6),
+    ("https://live.fanmingming.cn/tv/m3u/iptv.m3u", 0),
+    ("https://live.fanmingming.cn/tv/m3u/ipv6.m3u", 1),
+    ("https://cdn.jsdelivr.net/gh/YueChan/Live@main/IPTV.m3u", 1),
+    ("https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u", 1),
+    ("https://cdn.jsdelivr.net/gh/vbskycn/iptv@master/tv/iptv4.m3u", 2),
+    ("https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u", 2),
+    # 社区爬的，贴错标签比例高，只当最后手段
+    ("https://iptv-org.github.io/iptv/countries/cn.m3u", 6),
 ]
 
 MAX_WORKERS = 24
-PER_CH_CANDIDATES = 4      # 每个频道最多拿几个地址去测
+PER_CH_CANDIDATES = 6      # 每个频道最多留几个地址去测（上游多了，候选也该多留）
 # 每个频道输出几条线路。默认 1 条：影视仓在第一条播失败时会静默切到下一条，
 # 多给几条等于给它机会跳到灰产源上（这正是"有时正常有时出广告"的来源之一）
 PER_CH_LINES = int(os.environ.get("PER_CH_LINES", "1"))
 PLAYLIST_LIMIT = 512 * 1024
 SEG_BYTES = 4096
-STALE_SECONDS = 600        # 切片超过 10 分钟没更新 → 定格僵尸源
-TRUSTED_MAX = 1            # 央视 / 卫视只接受可信度 <= 1 的上游
+STALE_SECONDS = 1800       # 切片超过 30 分钟没更新才算定格（太严会误杀打包源）
 # 通过校验的频道占比低于这个值只报警、不中止（写出去的都是验证过的，安全）
 MIN_COVERAGE = float(os.environ.get("MIN_COVERAGE", "0.5"))
 
@@ -130,6 +139,11 @@ def canon(name):
     up = s.upper()
     m = re.match(r"^CCTV(\d{1,2})(\+|PLUS)?", up)
     if m:
+        # CCTV-4欧洲 / CCTV-4美洲 是海外版，内容跟国内 CCTV4 不是一路，必须分开
+        tail = up[m.end():]
+        for k in ("欧洲", "美洲", "亚洲", "海外"):
+            if k in tail:
+                return "CCTV" + m.group(1) + k
         return "CCTV" + m.group(1) + ("+" if m.group(2) else "")
 
     # 只有明确是中央台的中文名才做映射，避免把地方"体育频道"也吞进来
@@ -144,6 +158,22 @@ def canon(name):
     return s
 
 
+_CCTV_OK = re.compile(r"^CCTV\d{1,2}(\+|PLUS)?(欧洲|美洲|亚洲|海外)?$")
+_CCTV_CN = re.compile(r"^CCTV[\u4e00-\u9fa5][\u4e00-\u9fa5&·]{1,9}$")
+
+
+def valid_ch(ch):
+    """挡住假台名：iptv-org 里有一堆 "CCTV+1"、"CCTVStormFootball"、
+    "CCTVWomen'sFashion" 这类把境外台挂上 CCTV 前缀的条目，留着只会占位。"""
+    if not ch.startswith("CCTV"):
+        return True
+    if ch in ("CCTV4K", "CCTV8K"):
+        return True
+    if _CCTV_OK.match(ch):
+        return True
+    return bool(_CCTV_CN.match(ch))      # 央视付费频道：CCTV怀旧剧场 / CCTV文化精品
+
+
 def group_of(ch):
     if ch.startswith("CCTV") or ch.startswith("CGTN"):
         return "央视频道"
@@ -153,13 +183,16 @@ def group_of(ch):
 
 
 def ch_order(ch):
-    m = re.match(r"^CCTV(\d{1,2})(\+)?$", ch)
-    if m:
-        return (0, int(m.group(1)), 1 if m.group(2) else 0)
     if ch in ("CCTV4K", "CCTV8K"):
         return (0, 90, 0)
     if ch.startswith("CGTN"):
         return (0, 95, 0)
+    m = re.match(r"^CCTV(\d{1,2})(\+)?(.*)$", ch)
+    if m:
+        suffix = m.group(3) or ""
+        # 同一台号内部顺序：本台 → 5+ 这类加大版 → 欧洲/美洲等海外版
+        rank = 1 if m.group(2) else (2 if suffix else 0)
+        return (0, int(m.group(1)), rank)
     if "卫视" in ch:
         return (1, 0, 0)
     return (2, 0, 0)
@@ -282,7 +315,7 @@ def _media(url, text=None):
     if "#EXTM3U" not in up or "#EXT-X-STREAM-INF" in up:
         return None
     segs = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
-    if len(segs) < 2:
+    if not segs:
         return None
     ok, lm = _seg_ok(urljoin(url, segs[-1]))
     if not ok:
@@ -387,54 +420,79 @@ def _snapshot(text, base):
     return seq, last, tdur, ("#EXT-X-ENDLIST" in up)
 
 
-def confirm_many(urls, workers=MAX_WORKERS):
-    """两轮采样：序列前进或最后一个切片换了，才算在直播。返回 {url: bool}
-
-    已知边界：它证明不了"画面就是这个台"。一条 24 小时卖药的直播流同样会通过。
-    那种情况只能靠上游可信度过滤（TRUSTED_MAX）来挡。
-    """
-    urls = [u for u in dict.fromkeys(urls) if u]
-    if not urls:
-        return {}
-
-    def first(u):
+def _poll(urls, workers):
+    """抓一轮基线：{url: (媒体节目单地址, 快照)}"""
+    def one(u):
         mu, mt = _resolve(u)
         if not mu:
             return u, None
         return u, (mu, _snapshot(mt, mu))
 
-    info = {}
+    out = {}
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        for u, r in ex.map(first, urls):
-            info[u] = r
+        for u, r in ex.map(one, urls):
+            out[u] = r
+    return out
 
-    tdurs = [r[1][2] for r in info.values() if r]
-    wait = max(8, min(14, (max(tdurs) if tdurs else 6) + 3))
-    log(f"[终审] 间隔 {wait}s 抓两轮节目单，确认是否真在直播（{len(urls)} 条）…")
-    time.sleep(wait)
 
-    def second(item):
+def _compare(bases, workers):
+    """再抓一轮和基线比：{(url): (是否在直播, 原因)}"""
+    def one(item):
         u, r = item
         if not r:
-            return u, False
+            return u, (False, "nofetch")
         mu, snap0 = r
         t = _playlist_text(mu)
         if not t:
-            return u, False
+            return u, (False, "nofetch")
         seq1, last1, _, end1 = _snapshot(t, mu)
         seq0, last0, _, end0 = snap0
-        if end0 or end1:                     # 已经结束的点播文件 = 广告 / 电影循环
-            return u, False
+        if end0 or end1:                      # 已经结束的点播文件 = 广告 / 电影循环
+            return u, (False, "endlist")
         if seq0 is not None and seq1 is not None and seq1 != seq0:
-            return u, True
-        return u, bool(last1) and last1 != last0
+            return u, (True, "seq")
+        if last1 and last1 != last0:
+            return u, (True, "seg")
+        return u, (False, "static")
 
-    res = {}
+    out = {}
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        for u, ok in ex.map(second, info.items()):
-            res[u] = ok
-    log(f"[终审] 确认在直播 {sum(1 for v in res.values() if v)} / {len(res)} 条")
-    return res
+        for u, r in ex.map(one, bases.items()):
+            out[u] = r
+    return out
+
+
+def confirm_many(urls, workers=MAX_WORKERS):
+    """间隔若干秒抓两次节目单：真直播的切片必然往前滚；广告 / 电影循环源要么带
+    ENDLIST，要么序列不动，两者都判死。落榜的再复核一轮，避免 CDN 缓存了节目单
+    造成误杀（不少 IPTV 中转服务器的 m3u8 有 10~30 秒缓存）。
+
+    已知边界：它证明不了"画面就是这个台"。一条 24 小时卖药的直播流同样会通过，
+    这种只能靠上游可信度排序去压，代码层面验不出来。
+    """
+    urls = [u for u in dict.fromkeys(urls) if u]
+    if not urls:
+        return {}
+
+    bases = _poll(urls, workers)
+    tdurs = [r[1][2] for r in bases.values() if r]
+    wait = max(8, min(14, (max(tdurs) if tdurs else 6) + 3))
+    log(f"[终审] 间隔 {wait}s 抓两轮节目单，确认是否真在直播（{len(urls)} 条）…")
+    time.sleep(wait)
+    res = _compare(bases, workers)
+
+    retry = [u for u, (ok, why) in res.items() if not ok and why != "endlist"]
+    if retry:
+        log(f"[终审] {len(retry)} 条这轮没看出在动，再等一轮复核（排除节目单被缓存）…")
+        b2 = _poll(retry, workers)
+        time.sleep(wait)
+        for u, (ok, _why) in _compare(b2, workers).items():
+            if ok:
+                res[u] = (True, "retry")
+
+    passed = sum(1 for ok, _ in res.values() if ok)
+    log(f"[终审] 确认在直播 {passed} / {len(res)} 条")
+    return {u: ok for u, (ok, _) in res.items()}
 
 
 # ---------------------------------------------------------------- 主流程
@@ -443,22 +501,46 @@ def main():
     log("[启动] live.py")
 
     entries = []
+    seen_up = set()
+    dead_up, suspect = [], []
     for up, trust in UPSTREAMS:
+        if up in seen_up:
+            continue
+        seen_up.add(up)
         log(f"[拉取] {up}")
         txt = fetch_text(up)
         if not txt:
+            dead_up.append(up)
             continue
         got = parse(txt)
-        log(f"  √ 解析 {len(got)} 条")
+        n_cctv = sum(1 for it in got if canon(it["name"]).startswith("CCTV"))
+        log(f"  √ 解析 {len(got)} 条（含央视 {n_cctv} 条，可信度 {trust}）")
+        # 一个正常的国内列表不可能一条央视都没有 —— 出现了就说明这个地址已经失效，
+        # 只是刚好返回了别的内容（这是上一版央视整体消失的直接原因，必须吵出来）
+        if len(got) < 10 or n_cctv == 0:
+            log("  [上游异常] 内容不像完整的频道表（条数过少或没有央视），权重按最差处理")
+            trust = 9
+            suspect.append(up)
         for it in got:
             it["trust"] = trust
             entries.append(it)
     log(f"[原始] 共 {len(entries)} 条")
 
+    if dead_up or suspect:
+        log(f"[上游检查] 抓取失败 {len(dead_up)} 个 / 内容异常 {len(suspect)} 个")
+        for u in dead_up:
+            log(f"    失效  {u}")
+        for u in suspect:
+            log(f"    异常  {u}")
+
     # 1) 归一化频道名
     for it in entries:
         it["ch"] = canon(it["name"])
     entries = [e for e in entries if e.get("ch") and e.get("url")]
+    before = len(entries)
+    entries = [e for e in entries if valid_ch(e["ch"])]
+    if before != len(entries):
+        log(f"[假台名] 丢弃 {before - len(entries)} 条挂着 CCTV 前缀的境外台")
     log(f"[归一化后] 共 {len(entries)} 条")
 
     # 2) 交叉校验：同一地址被不同上游标成不同频道 → 贴错标签，丢弃
@@ -520,23 +602,23 @@ def main():
                 else:
                     c["state"] = "dead"
 
-    # 6) 组候选池：央视 / 卫视不给低可信上游机会（贴错标签、换台主要来自这类源），
-    #    ENDLIST 的点播文件直接扔，连备胎都不当 —— 上一版就是把它留作兜底，
-    #    才出现"点进去是卖药广告"。
+    # 6) 组候选池。可信度只用来排序，不用来"一票否决"：
+    #    上一版把低可信上游的央视源全部过滤，结果主上游一挂，央视整体清零 ——
+    #    用户看到的是"一个中央台都没了"。现在改为：高可信优先，不够就用低可信
+    #    但通过终审的顶上去，并在日志里点名，方便判断要不要换上游。
     pool_of = {}
     for ch, d in by_ch.items():
-        need = TRUSTED_MAX if (ch.startswith(("CCTV", "CGTN")) or "卫视" in ch) else 9
-        live_c = [c for c in d["cands"] if c["state"] == "live" and int(c.get("trust", 9)) <= need]
-        raw_c = [c for c in d["cands"] if c["state"] == "rawts" and int(c.get("trust", 9)) <= need]
+        live_c = [c for c in d["cands"] if c["state"] == "live"]
+        raw_c = [c for c in d["cands"] if c["state"] == "rawts"]
         pool_of[ch] = (sorted(live_c, key=score), sorted(raw_c, key=score))
 
-    # 7) 终审：只对每台最靠前的三条候选做二次采样，时间花在刀刃上
+    # 7) 终审：每台最多验前 5 条（高可信的排在前面），时间花在刀刃上
     to_check = []
     for lc, _ in pool_of.values():
-        to_check.extend([c["url"] for c in lc[:3]])
+        to_check.extend([c["url"] for c in lc[:5]])
     ok_map = confirm_many(to_check)
 
-    out, empty = [], []
+    out, empty, weak = [], [], []
     for ch, d in by_ch.items():
         lc, rc = pool_of[ch]
         picked = [c for c in lc if ok_map.get(c["url"])]
@@ -545,6 +627,9 @@ def main():
         if not picked:
             empty.append(ch)
             continue
+        if int(picked[0].get("trust", 9)) >= 6:
+            weak.append(ch)
+            log(f"  [弱源] {ch} 只剩低可信上游的地址可用，未必是本站，慎用")
         out.append((ch, d["name"], d["logo"], picked[:PER_CH_LINES]))
 
     final = out
@@ -601,7 +686,12 @@ def main():
         g = group_of(ch)
         stats[g] = stats.get(g, 0) + 1
     log(f"[分组统计] {stats}")
-    log(f"[完成] 频道 {len(final)} 个 / 线路 {len(lines) // 2} 条 / 单线路频道 {one_line} 个")
+    cctv_cnt = sum(1 for x in final if x[0].startswith(("CCTV", "CGTN")))
+    if cctv_cnt == 0:
+        log("[严重] 本次一个中央台都没生成 —— 上游列表大概率全部失效，请看上面 [上游失效] 那几行")
+    if weak:
+        log(f"[弱源台] {len(weak)} 个：{', '.join(sorted(weak)[:20])}")
+    log(f"[完成] 频道 {len(final)} 个（央视 {cctv_cnt}）/ 线路 {len(lines) // 2} 条 / 单线路频道 {one_line} 个")
     log(f"[输出] {OUTPUT}")
     return 0
 
