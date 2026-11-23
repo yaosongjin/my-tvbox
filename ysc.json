@@ -5,7 +5,7 @@
   "sites": [
     {
       "key": "s1",
-      "name": "小肥羊的点播台",
+      "name": "芒果资源网",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
@@ -13,9 +13,49 @@
     },
     {
       "key": "s2",
-      "name": "小肥羊的点播台2",
+      "name": "量子资源",
       "type": 1,
-      "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
+      "api": "https://cj.lziapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s3",
+      "name": "非凡资源",
+      "type": 1,
+      "api": "https://cj.ffzyapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s4",
+      "name": "暴风资源",
+      "type": 1,
+      "api": "https://bfzyapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s5",
+      "name": "红牛资源",
+      "type": 1,
+      "api": "https://hongniuzy2.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s6",
+      "name": "电影天堂",
+      "type": 1,
+      "api": "http://caiji.dyttzyapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s7",
+      "name": "极速资源",
+      "type": 1,
+      "api": "https://jszyapi.com/api.php/provide/vod/",
       "searchable": 1,
       "filterable": 1
     }
