@@ -4,7 +4,7 @@
   "spider": "",
   "sites": [
     {
-      "key": "s1",
+      "key": "sbe0af2",
       "name": "小肥羊的点播台",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
@@ -12,7 +12,7 @@
       "filterable": 1
     },
     {
-      "key": "s2",
+      "key": "s994685",
       "name": "红牛资源",
       "type": 1,
       "api": "https://hongniuzy2.com/api.php/provide/vod/",
@@ -20,7 +20,7 @@
       "filterable": 1
     },
     {
-      "key": "s3",
+      "key": "sef763a",
       "name": "百度资源",
       "type": 1,
       "api": "https://api.apibdzy.com/api.php/provide/vod/",

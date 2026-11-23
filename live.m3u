@@ -1,33 +1,61 @@
 #EXTM3U x-tvg-url="https://epg.pw/xmltv/epg_CN.xml"
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-1
+#EXTINF:-1 group-title="央视频道",CCTV-1
 http://74.91.26.218:82/live/cctv1hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv2.png" group-title="央视频道",CCTV-2
+#EXTINF:-1 group-title="央视频道",CCTV-2
 http://74.91.26.218:82/live/cctv2hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv3.png" group-title="央视频道",CCTV-3
+#EXTINF:-1 group-title="央视频道",CCTV-3
 http://74.91.26.218:82/live/cctv3hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv5.png" group-title="央视频道",CCTV-5+
+#EXTINF:-1 group-title="央视频道",CCTV-5+
 https://php.jdshipin.com/TVOD/iptv.php?id=cctv5p
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv6.png" group-title="央视频道",CCTV-6
+#EXTINF:-1 group-title="央视频道",CCTV-6
 http://69.30.245.50/live/cctv6.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv7.png" group-title="央视频道",CCTV-7
+#EXTINF:-1 group-title="央视频道",CCTV-7
 http://74.91.26.218:82/live/cctv7hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv8.png" group-title="央视频道",CCTV-8
+#EXTINF:-1 group-title="央视频道",CCTV-8
 http://74.91.26.218:82/live/cctv8hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv8.png" group-title="央视频道",CCTV-8K
+#EXTINF:-1 group-title="央视频道",CCTV-8K
 http://192.151.150.154/live/cctv8k.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv9.png" group-title="央视频道",CCTV-9 (576i)
+#EXTINF:-1 group-title="央视频道",CCTV-9
 https://xykt-fix.github.io/Y77.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-10
+#EXTINF:-1 group-title="央视频道",CCTV-10
 http://74.91.26.218:82/live/cctv10hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-11
+#EXTINF:-1 group-title="央视频道",CCTV-11
 http://74.91.26.218:82/live/cctv11hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-12
+#EXTINF:-1 group-title="央视频道",CCTV-12
 http://74.91.26.218:82/live/cctv12hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-13
+#EXTINF:-1 group-title="央视频道",CCTV-13
 http://74.91.26.218:82/live/cctv13hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-14
+#EXTINF:-1 group-title="央视频道",CCTV-14
 http://74.91.26.218:82/live/cctv14hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-15
+#EXTINF:-1 group-title="央视频道",CCTV-15
 http://74.91.26.218:82/live/cctv15hd.m3u8
-#EXTINF:-1 tvg-logo="https://epg.pw/logo/cctv1.png" group-title="央视频道",CCTV-17
+#EXTINF:-1 group-title="央视频道",CCTV-17
 http://74.91.26.218:82/live/cctv17hd.m3u8
+#EXTINF:-1 group-title="央视频道",CCTV+ 1 [Not 24/7]
+https://cd-live-stream.news.cctvplus.com/live/smil:CHANNEL1.smil/playlist.m3u8
+#EXTINF:-1 group-title="央视频道",CCTV+ 2 [Not 24/7]
+https://cd-live-stream.news.cctvplus.com/live/smil:CHANNEL2.smil/playlist.m3u8
+#EXTINF:-1 group-title="央视频道",CCTV-Billiards
+http://38.75.136.137:98/gslb/dsdqpub/ystq.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Culture of Quality SD
+http://38.75.136.137:98/gslb/dsdqpub/ysjp.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Golf & Tennis
+http://38.75.136.137:98/gslb/dsdqpub/gefwq.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Health
+http://38.75.136.137:98/gslb/dsdqpub/wsjk.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Nostalgia Theater
+http://38.75.136.137:98/gslb/dsdqpub/hjjc.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Storm Football
+http://38.75.136.137:98/gslb/dsdqpub/fyzq.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Storm Music
+http://38.75.136.137:98/gslb/dsdqpub/fyyy.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Storm Theater
+http://38.75.136.137:98/gslb/dsdqpub/fyjc.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-The First Theater
+http://38.75.136.137:98/gslb/dsdqpub/dyjc.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Weapon & Technology
+http://38.75.136.137:98/gslb/dsdqpub/gfjs.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-Women's Fashion SD
+http://38.75.136.137:98/gslb/dsdqpub/nxss.m3u8?auth=testpub
+#EXTINF:-1 group-title="央视频道",CCTV-World Geography SD
+http://38.75.136.137:98/gslb/dsdqpub/sjdl.m3u8?auth=testpub
