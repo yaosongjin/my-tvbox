@@ -15,12 +15,16 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
    不同频道，线路被打散。现在统一映射成规范名（CCTV3）后再归并。
 4. 新增交叉校验：同一个地址在不同上游被标成不同频道 → 视为贴错标签，丢弃；
    地址里写着 cctv5 却标成 CCTV3 → 丢弃。这类"换台"在免费源里非常常见。
-5. pinned.txt 支持 `名称,地址`，可以把自己验证过的好源钉死在第 1 条。
+5. 新增"终审"：间隔十几秒抓两次节目单，只有切片真的在往前滚才算在直播。广告 /
+   电影循环源是固定文件（要么带 ENDLIST，要么序列不动），一律丢弃，不再留作备胎。
+6. 央视 / 卫视只接受高可信上游的源；小于 100% 的成片率不再用"降级模式"补齐 ——
+   补齐的每一格都是没验证过的地址，那正是广告进来的口子。
+7. 只依赖本文件，不需要任何额外的配置文件。
 """
 
-import json
 import os
 import re
+import sys
 import time
 from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlparse
@@ -38,7 +42,6 @@ except Exception:
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT = os.path.join(ROOT, "live.m3u")
 BACKUP = os.path.join(ROOT, "live.m3u.bak")
-PINNED = os.path.join(ROOT, "config", "pinned.txt")
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -56,10 +59,15 @@ UPSTREAMS = [
 
 MAX_WORKERS = 24
 PER_CH_CANDIDATES = 4      # 每个频道最多拿几个地址去测
-PER_CH_LINES = 3           # 每个频道最终最多输出几条线路
+# 每个频道输出几条线路。默认 1 条：影视仓在第一条播失败时会静默切到下一条，
+# 多给几条等于给它机会跳到灰产源上（这正是"有时正常有时出广告"的来源之一）
+PER_CH_LINES = int(os.environ.get("PER_CH_LINES", "1"))
 PLAYLIST_LIMIT = 512 * 1024
 SEG_BYTES = 4096
 STALE_SECONDS = 600        # 切片超过 10 分钟没更新 → 定格僵尸源
+TRUSTED_MAX = 1            # 央视 / 卫视只接受可信度 <= 1 的上游
+# 通过校验的频道占比低于这个值只报警、不中止（写出去的都是验证过的，安全）
+MIN_COVERAGE = float(os.environ.get("MIN_COVERAGE", "0.5"))
 
 ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
 _BRACKET = re.compile(r"[\[【(（][^\]】)）]*[\]】)）]")
@@ -314,8 +322,6 @@ def inspect(url):
 def score(entry):
     """数字越小越优先"""
     s = 0
-    if entry.get("pinned"):
-        s -= 100
     st = entry.get("state")
     if st == "live":
         s += 0
@@ -331,34 +337,104 @@ def score(entry):
     return s
 
 
-# ---------------------------------------------------------------- pinned
+# ---------------------------------------------------------------- 终审：确认"真的在直播"
+#
+# 前面的 inspect() 只能证明"这个地址能取到节目单、切片下载得下来"。广告源、电影循环源、
+# 台标贴错的源都能通过。真正能拉开差距的一条判据是：直播流的切片必须一直在往前滚。
+# 所以这里间隔十几秒抓两次节目单做比对 —— 不需要解码画面，跑得完，也够狠。
 
-def read_pinned():
-    items = []
-    if not os.path.exists(PINNED):
-        return items
-    with open(PINNED, encoding="utf-8") as f:
-        for raw in f:
-            line = raw.split("#", 1)[0].strip()
-            if not line:
-                continue
-            if "," in line:
-                name, url = line.rsplit(",", 1)
-            elif "\t" in line:
-                name, url = line.split("\t", 1)
-            else:
-                name, url = "", line
-            name, url = name.strip(), url.strip()
-            if not url.lower().startswith(("http://", "https://")):
-                continue
-            if not name:
-                m = _CCTV_NUM.search(url)
-                name = f"CCTV{m.group(1)}" if m else ""
-            if not name:
-                log(f"  [pinned] 跳过（认不出频道名，请写成 名称,地址）：{url}")
-                continue
-            items.append({"name": name, "url": url, "trust": -1, "pinned": True})
-    return items
+def _playlist_text(url):
+    body = _http_bytes(url, limit=PLAYLIST_LIMIT)
+    if not body:
+        return None
+    text = body.decode("utf-8", "ignore")
+    if "#EXTM3U" not in text.upper():
+        return None
+    return text
+
+
+def _resolve(url, text=None, depth=0):
+    """master 节目单 → 一条真正带切片的子流；(media_url, text) 或 (None, None)"""
+    t = text if text is not None else _playlist_text(url)
+    if not t:
+        return None, None
+    if "#EXT-X-STREAM-INF" not in t.upper():
+        return url, t
+    if depth > 1:
+        return None, None
+    variants = [
+        urljoin(url, l.strip())
+        for l in t.splitlines()
+        if l.strip() and not l.strip().startswith("#")
+    ]
+    for v in variants[:2]:
+        mu, mt = _resolve(v, None, depth + 1)
+        if mu:
+            return mu, mt
+    return None, None
+
+
+def _snapshot(text, base):
+    """(media-sequence, 最后一个切片, targetduration, 是否带 ENDLIST)"""
+    up = text.upper()
+    m = re.search(r"#EXT-X-MEDIA-SEQUENCE:\s*(\d+)", up)
+    seq = int(m.group(1)) if m else None
+    m = re.search(r"#EXT-X-TARGETDURATION:\s*(\d+)", up)
+    tdur = int(m.group(1)) if m else 6
+    segs = [l.strip() for l in text.splitlines()
+            if l.strip() and not l.strip().startswith("#")]
+    last = urljoin(base, segs[-1]) if segs else ""
+    return seq, last, tdur, ("#EXT-X-ENDLIST" in up)
+
+
+def confirm_many(urls, workers=MAX_WORKERS):
+    """两轮采样：序列前进或最后一个切片换了，才算在直播。返回 {url: bool}
+
+    已知边界：它证明不了"画面就是这个台"。一条 24 小时卖药的直播流同样会通过。
+    那种情况只能靠上游可信度过滤（TRUSTED_MAX）来挡。
+    """
+    urls = [u for u in dict.fromkeys(urls) if u]
+    if not urls:
+        return {}
+
+    def first(u):
+        mu, mt = _resolve(u)
+        if not mu:
+            return u, None
+        return u, (mu, _snapshot(mt, mu))
+
+    info = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for u, r in ex.map(first, urls):
+            info[u] = r
+
+    tdurs = [r[1][2] for r in info.values() if r]
+    wait = max(8, min(14, (max(tdurs) if tdurs else 6) + 3))
+    log(f"[终审] 间隔 {wait}s 抓两轮节目单，确认是否真在直播（{len(urls)} 条）…")
+    time.sleep(wait)
+
+    def second(item):
+        u, r = item
+        if not r:
+            return u, False
+        mu, snap0 = r
+        t = _playlist_text(mu)
+        if not t:
+            return u, False
+        seq1, last1, _, end1 = _snapshot(t, mu)
+        seq0, last0, _, end0 = snap0
+        if end0 or end1:                     # 已经结束的点播文件 = 广告 / 电影循环
+            return u, False
+        if seq0 is not None and seq1 is not None and seq1 != seq0:
+            return u, True
+        return u, bool(last1) and last1 != last0
+
+    res = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for u, ok in ex.map(second, info.items()):
+            res[u] = ok
+    log(f"[终审] 确认在直播 {sum(1 for v in res.values() if v)} / {len(res)} 条")
+    return res
 
 
 # ---------------------------------------------------------------- 主流程
@@ -421,12 +497,7 @@ def main():
         d["cands"].sort(key=score)
         d["cands"] = d["cands"][:PER_CH_CANDIDATES]
 
-    pinned = read_pinned()
-    for p in pinned:
-        p["ch"] = canon(p["name"])
-        d = by_ch.setdefault(p["ch"], {"name": p["ch"], "logo": "", "cands": []})
-        d["cands"].insert(0, p)
-    log(f"[pinned] {len(pinned)} 条，频道总数 {len(by_ch)}")
+    log(f"[频道] 归并后 {len(by_ch)} 个，待测候选 {sum(len(d['cands']) for d in by_ch.values())} 条")
 
     # 5) 并发测活（只测候选，不测全网）
     tasks = [(d, c) for d in by_ch.values() for c in d["cands"]]
@@ -446,58 +517,48 @@ def main():
                     res = None
                 if res:
                     c["state"] = res["state"]
-                elif c.get("pinned"):
-                    c["state"] = "unverified"
-                    log(f"  [pinned] 本次测不通，仍按你的要求放首位: {c['ch']} {c['url']}")
                 else:
                     c["state"] = "dead"
 
-    # 6) 每频道挑线路：只承认"已验证是直播"的源；点播/广告流（ENDLIST）和
-    #    未通过校验的源只在别无选择时兜底，绝不当第 1 条
-    def select(relaxed):
-        out, empty = [], []
-        for ch, d in by_ch.items():
-            pin = [c for c in d["cands"] if c.get("pinned")]
-            strong = [c for c in d["cands"] if not c.get("pinned") and c.get("state") in ("live", "rawts")]
-            weak = [c for c in d["cands"] if not c.get("pinned") and c.get("state") == "endlist"]
-            loose = [c for c in d["cands"] if not c.get("pinned") and c.get("state") == "dead"]
+    # 6) 组候选池：央视 / 卫视不给低可信上游机会（贴错标签、换台主要来自这类源），
+    #    ENDLIST 的点播文件直接扔，连备胎都不当 —— 上一版就是把它留作兜底，
+    #    才出现"点进去是卖药广告"。
+    pool_of = {}
+    for ch, d in by_ch.items():
+        need = TRUSTED_MAX if (ch.startswith(("CCTV", "CGTN")) or "卫视" in ch) else 9
+        live_c = [c for c in d["cands"] if c["state"] == "live" and int(c.get("trust", 9)) <= need]
+        raw_c = [c for c in d["cands"] if c["state"] == "rawts" and int(c.get("trust", 9)) <= need]
+        pool_of[ch] = (sorted(live_c, key=score), sorted(raw_c, key=score))
 
-            # 自己钉的源永远排第 1（那是你在家验证过的，境外跑测不一定测得通）
-            pool = sorted(pin, key=score) + sorted(strong, key=score)
-            if not pool and relaxed:
-                pool = sorted(loose, key=score)[:1]
-            if not pool:
-                pool = sorted(weak, key=score)
-            if not pool:
-                empty.append(ch)
-                continue
+    # 7) 终审：只对每台最靠前的三条候选做二次采样，时间花在刀刃上
+    to_check = []
+    for lc, _ in pool_of.values():
+        to_check.extend([c["url"] for c in lc[:3]])
+    ok_map = confirm_many(to_check)
 
-            picked, hosts = [], set()
-            for c in pool:
-                h = urlparse(c["url"]).netloc.lower()
-                if h in hosts:
-                    continue
-                picked.append(c)
-                hosts.add(h)
-                if len(picked) >= PER_CH_LINES:
-                    break
-            if len(picked) < PER_CH_LINES:
-                for c in pool:
-                    if c in picked:
-                        continue
-                    picked.append(c)
-                    if len(picked) >= PER_CH_LINES:
-                        break
-            out.append((ch, d["name"], d["logo"], picked))
-        return out, empty
+    out, empty = [], []
+    for ch, d in by_ch.items():
+        lc, rc = pool_of[ch]
+        picked = [c for c in lc if ok_map.get(c["url"])]
+        if not picked:
+            picked = rc[:PER_CH_LINES]       # 裸 TS 无从做序列校验，只在没有确认源时兜底
+        if not picked:
+            empty.append(ch)
+            continue
+        out.append((ch, d["name"], d["logo"], picked[:PER_CH_LINES]))
 
-    final, empty = select(relaxed=False)
-    # 运行机（GitHub Actions）在境外，部分国内源会按地域拒绝它；如果成片率太低，
-    # 说明是"测不到"而不是"源真死"，退回宽松模式保频道数量
+    final = out
     coverage = len(final) / max(1, len(by_ch))
-    if coverage < 0.5 and by_ch:
-        log(f"[降级] 仅 {len(final)}/{len(by_ch)} 个频道通过校验，疑似运行机网络受限，启用宽松模式")
-        final, empty = select(relaxed=True)
+    log(f"[成片率] {coverage:.0%}（{len(final)}/{len(by_ch)} 个频道）")
+
+    # 写出去的每一条都是"确认在直播"的，所以成片率低只报警、不中止：
+    # 少几个台，总比多几个广告台好。成片率 0 才说明这次网络完全不通，保留旧文件。
+    if by_ch and coverage < MIN_COVERAGE:
+        log("=" * 64)
+        log(f"[注意] 只有 {coverage:.0%} 的频道通过终审。基本都是当前网络到不了这些源，")
+        log("       不是源死了。本次仍会写文件，但只写通过终审的那些。")
+        log("       想让未通过的台也出现，只能在国内宽带的机器上重跑：python scripts/live.py")
+        log("=" * 64)
 
     log(f"[可用频道] {len(final)} 个   [无可用源] {len(empty)} 个")
     if empty:
@@ -506,11 +567,13 @@ def main():
     if not final:
         if os.path.exists(OUTPUT):
             log("[兜底] 本次 0 个可用频道，保留上次 live.m3u，不覆盖")
+            log("       注意：这条路径说明本次一条都没验证成功（网络不通），旧文件里的台")
+            log("       未必干净。请在能正常播放的宽带下跑一次 python scripts/live.py。")
         else:
             log("[致命] 无可用源且无历史文件")
-        return
+        return 3
 
-    # 7) 排序 + 输出
+    # 8) 排序 + 输出
     final.sort(key=lambda x: (ch_order(x[0]), x[1]))
     lines = ["#EXTM3U"]
     one_line = 0
@@ -540,7 +603,8 @@ def main():
     log(f"[分组统计] {stats}")
     log(f"[完成] 频道 {len(final)} 个 / 线路 {len(lines) // 2} 条 / 单线路频道 {one_line} 个")
     log(f"[输出] {OUTPUT}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
