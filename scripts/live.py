@@ -1,200 +1,131 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-生成 live.m3u —— 同台保留多条线路，供端上手动选源 / 自动回退。
-
-- 每个频道最多保留 MAX_LINES 条测活通过的源
-- 线路按"域名稳定性"排序：稳域名在前
-- 输出名带 线路1/2/3，同名不同 URL 在影视仓里可手动切换
-- 不保底、不强制覆盖，全来自上游真测活
-"""
-
 import re
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ================== 配置 ==================
+OUTPUT = "live.m3u"
+TIMEOUT = (5, 10)
+MAX_WORKERS = 16
+MAX_LINES = 3
+HARD_LIMIT = 300
+
+UA = {"User-Agent": "Mozilla/5.0"}
 UPSTREAMS = [
     "https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
     "https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u",
     "https://cdn.jsdelivr.net/gh/fanmingming/live@main/tv/iptv.m3u",
 ]
 
-OUTPUT = "live.m3u"
-TIMEOUT = (3, 6)
-MAX_WORKERS = 28
-HARD_LIMIT = 300
-MAX_LINES = 3           # 同台最多保留线路数
+BAD = [b"400-788", b"consultation hotline", b"consulting hotline"]
 
-UA = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0 Safari/537.36"
-    )
-}
+def clean_name(s):
+    s = re.sub(r"\s+", "", s or "")
+    return s.strip()
 
-# 广告/错误黑名单
-BAD_MARKERS = (
-    b"advertise", b"advert", b"jump", b"landing",
-    b"403 forbidden", b"not found",
-    b"you don't have authorization",
-    b"\xe6\x8b\x92\xe7\xbb\x9d\xe8\xae\xbf\xe9\x97\xae",  # 拒绝访问
-    b"\xe6\x97\xa0\xe6\x9d\x83\xe9\x99\x90",              # 无权限
-    b"\xe5\xb9\xbf\xe5\x91\x8a",                          # 广告
-    b"\xe8\xb7\xb3\xe8\xbd\xac",                          # 跳转
-    b"400-",                                              # 广告热线特征
-)
-
-# 已知较稳域名（排前面当主源）
-PREFERRED_DOMAINS = (
-    "fanmingming", "gaoma", "iptv-org",
-    "live.cctv.cn", "cctv.com",
-)
-
-# ================== 清洗 ==================
-_CLEAN_PATTERNS = [
-    re.compile(r"\[[^\]]*\]"),
-    re.compile(r"\([^\)]*\)"),
-    re.compile(r"\bHD\b", re.I),
-    re.compile(r"\bFHD\b", re.I),
-    re.compile(r"\bUHD\b", re.I),
-    re.compile(r"高清|超清|标清|蓝光|4K|8K", re.I),
-    re.compile(r"\b\d{3,4}[pi]\b", re.I),
-]
-
-def clean_name(name):
-    s = name.strip()
-    for p in _CLEAN_PATTERNS:
-        s = p.sub("", s)
-    return re.sub(r"\s+", " ", s).strip(" -_|·")
-
-def norm(name):
-    return re.sub(r"[\s\-_·|]+", "", clean_name(name)).lower()
-
-# ================== 分组 ==================
-PROVINCE_EN = {
-    "hunan", "zhejiang", "jiangsu", "anhui", "beijing", "shanghai",
-    "guangdong", "shenzhen", "tianjin", "chongqing", "shandong",
-    "henan", "hebei", "hubei", "sichuan", "fujian", "jiangxi",
-    "liaoning", "heilongjiang", "jilin", "shanxi", "shaanxi",
-    "gansu", "qinghai", "yunnan", "guizhou", "guangxi", "hainan",
-    "xinjiang", "xizang", "tibet", "ningxia", "neimenggu", "innermongolia",
-}
-HMT_KEYWORDS = ("凤凰", "翡翠", "明珠", "tvb", "凤凰卫视", "翡翠台", "明珠台")
+def norm(s):
+    return re.sub(r"[\s_\-（）()]+", "", clean_name(s)).lower()
 
 def match_group(name):
-    s = clean_name(name)
-    low = s.lower()
-    if "cctv" in low or s.startswith("央视"):
+    if re.match(r"^cctv\d", name, re.I):
         return "央视频道"
-    for kw in HMT_KEYWORDS:
-        if kw in low:
-            return "卫视频道"
-    if "卫视" in s:
-        return "卫视频道"
-    m = re.fullmatch(r"([A-Za-z ]+?)\s*TV", s)
-    if m and m.group(1).replace(" ", "").lower() in PROVINCE_EN:
+    if "卫视" in name:
         return "卫视频道"
     return "地方台"
 
-# ================== 解析 ==================
-_ATTR_NAME = re.compile(r'#EXTINF:[^,]*,(.*)$', re.I)
-
 def parse(text):
-    out, pending = [], None
-    for raw in text.splitlines():
-        line = raw.strip()
+    out, name = [], ""
+    for line in text.splitlines():
+        line = line.strip()
         if line.startswith("#EXTINF"):
-            m = _ATTR_NAME.search(line)
-            pending = m.group(1).strip() if m else ""
-        elif line and not line.startswith("#") and line.lower().startswith("http") and pending:
-            out.append((pending, line))
-            pending = None
+            m = re.search(r",(.+)$", line)
+            name = m.group(1) if m else ""
+        elif line and not line.startswith("#"):
+            out.append((name, line))
+            name = ""
     return out
 
-# ================== 测活 ==================
-def alive(url):
+def fetch(url):
     try:
-        r = requests.get(url, timeout=TIMEOUT, stream=True, headers=UA)
-        try:
-            if r.status_code != 200:
-                return False
-            head = next(r.iter_content(1024), b"")
-        finally:
-            r.close()
-        low = head.lower()
-        if b"#extm3u" not in low and b".m3u8" not in low:
+        r = requests.get(url, timeout=TIMEOUT, headers=UA)
+        if r.status_code == 200 and "#EXTM3U" in r.text[:500].upper():
+            return r.text
+    except Exception as e:
+        print(f"  X 拉取失败 {url} {e}")
+        return None
+    print(f"  X 拉取失败 {url}")
+    return None
+
+def probe(url):
+    try:
+        r = requests.get(url, timeout=TIMEOUT, headers=UA)
+        if r.status_code != 200:
             return False
-        for bad in BAD_MARKERS:
-            if bad in low:
-                return False
-        return True
+        text = r.text[:8192]
+        low = text.lower()
+        if b"#extm3u" not in low:
+            return False
+        if any(b in low for b in BAD):
+            return False
+        # 宽松：有分片、或 m3u 里有 #EXTINF/#EXT-X-STREAM-INF 就算入口合法
+        if re.search(r"\.ts|\.m4s|\.mp4|#EXT-X-STREAM-INF|#EXTINF", low, re.I):
+            return True
+        return False
     except Exception:
         return False
 
+def alive(url):
+    # 只测一次，不再二次连测
+    return probe(url)
+
 def preferred_rank(url):
-    """稳域名在前，主源优先"""
-    host = url.lower()
-    for i, d in enumerate(PREFERRED_DOMAINS):
-        if d in host:
-            return i
-    return len(PREFERRED_DOMAINS)
+    u = url.lower()
+    if "fanmingming" in u or "gaoma" in u:
+        return 0
+    if "iptv-org" in u or "cctv" in u:
+        return 1
+    if re.search(r"\d{1,3}(\.\d{1,3}){3}:\d+", u):
+        return 3
+    return 2
 
-# ================== 拉取上游 ==================
-def fetch(url):
-    try:
-        r = requests.get(url, timeout=(5, 12), stream=True, headers=UA)
-        try:
-            if r.status_code == 200:
-                body = next(r.iter_content(4096), b"")
-                if b"#EXTM3U" in body[:200].upper():
-                    return body.decode("utf-8", "ignore")
-        finally:
-            r.close()
-    except Exception:
-        pass
-    return None
-
-# ================== 主流程 ==================
 def main():
-    raw_items = []
+    raw = []
     for up in UPSTREAMS:
-        print(f"[拉取] {up}")
         txt = fetch(up)
         if txt:
             items = parse(txt)
-            print(f"  ✓ 解析 {len(items)} 条")
-            raw_items.extend(items)
-        else:
-            print(f"  ✗ 失败")
-    print(f"[原始] 共 {len(raw_items)} 条")
+            print(f"  √ 解析 {len(items)} 条 {up}")
+            raw.extend(items)
+    print(f"[原始] 共 {len(raw)} 条")
 
-    # 收集所有 (name, url)，不做台级去重
-    all_items = []
-    for name, url in raw_items:
-        cname = clean_name(name)
-        if cname:
-            all_items.append((cname, url, match_group(cname)))
-    all_items = all_items[:HARD_LIMIT]
-    print(f"[候选] {len(all_items)} 条")
+    seen = {}
+    for name, url in raw:
+        cn = clean_name(name)
+        if not cn:
+            continue
+        k = norm(cn)
+        seen.setdefault(k, {"cname": cn, "grp": match_group(cn), "urls": []})
+        if url not in seen[k]["urls"]:
+            seen[k]["urls"].append(url)
+    cand = []
+    for data in seen.values():
+        for u in data["urls"][:5]:
+            cand.append((data["cname"], u, data["grp"]))
+    cand = cand[:HARD_LIMIT]
+    print(f"[候选] {len(cand)} 条")
 
-    # 并发测活
-    alive_items = []
+    ok = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futs = {ex.submit(alive, url): item for item in all_items}
-        for f in as_completed(futs):
-            item = futs[f]
+        fs = {ex.submit(alive, u): (n, u, g) for n, u, g in cand}
+        for f in as_completed(fs):
+            n, u, g = fs[f]
             try:
                 if f.result():
-                    alive_items.append(item)
+                    ok.append((n, u, g))
             except Exception:
                 pass
-    print(f"[测活通过] {len(alive_items)} 条")
+    print(f"[测活通过] {len(ok)} 条")
 
-    # 同台聚合，最多 MAX_LINES 条，按稳域名排序
     by_name = {}
-    for cname, url, grp in alive_items:
+    for cname, url, grp in ok:
         key = norm(cname)
         by_name.setdefault(key, {"cname": cname, "grp": grp, "urls": []})
         if url not in by_name[key]["urls"]:
@@ -213,17 +144,14 @@ def main():
         stats[g] = stats.get(g, 0) + 1
     print(f"[分组统计] {stats}")
 
-    # 写 m3u：同台多线路，名字带 线路N
     lines = ["#EXTM3U"]
-    last_base = None
-    line_no = 0
+    last_base, line_no = None, 0
     for cname, url, grp in final:
         base = clean_name(cname)
         if base == last_base:
             line_no += 1
         else:
-            line_no = 1
-            last_base = base
+            line_no, last_base = 1, base
         disp = f"{base} 线路{line_no}"
         lines.append(f'#EXTINF:-1 tvg-name="{base}" group-title="{grp}",{disp}')
         lines.append(url)
