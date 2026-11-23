@@ -4,8 +4,8 @@
   "spider": "",
   "sites": [
     {
-      "key": "s1",
-      "name": "芒果资源网",
+      "key": "anna",
+      "name": "小肥羊的点播台",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 1,
