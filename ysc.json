@@ -2,7 +2,32 @@
   "key": "mybox",
   "name": "我的影视仓",
   "spider": "",
-  "sites": [],
+  "sites": [
+    {
+      "key": "s1",
+      "name": "芒果资源网",
+      "type": 1,
+      "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s2",
+      "name": "红牛资源",
+      "type": 1,
+      "api": "https://hongniuzy2.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    },
+    {
+      "key": "s3",
+      "name": "百度资源",
+      "type": 1,
+      "api": "https://api.apibdzy.com/api.php/provide/vod/",
+      "searchable": 1,
+      "filterable": 1
+    }
+  ],
   "parses": [],
   "lives": [
     {
