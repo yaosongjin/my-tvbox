@@ -1,15 +1,16 @@
-import requests, re, concurrent.futures as cf
+import requests, re, signal, concurrent.futures as cf
 
 # ============ 配置区 ============
 
 UPSTREAMS = [
-    "https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
-    "https://iptv-org.github.io/iptv/countries/cn.m3u",
     "https://gh-proxy.com/https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
+    "https://iptv-org.github.io/iptv/countries/cn.m3u",
+    "https://raw.githubusercontent.com/fanmingming/live/main/tv/iptv.m3u",
 ]
 
 OUT = "live.m3u"
-TIMEOUT = 8
+TIMEOUT = (3, 5)          # (连接超时, 读取超时)
+HARD_LIMIT = 240          # 整体硬上限，秒
 EPG = "https://epg.pw/xmltv/epg_CN.xml"
 
 HEADERS = {
@@ -18,25 +19,33 @@ HEADERS = {
     "Referer": "https://tv.cctv.com/",
 }
 
-# 组名 -> 匹配关键词（去横杠、去空格后比对）
+# 解析后先按关键词粗筛，只测这些，砍掉几百个无关频道
+KEEP = [
+    "CCTV", "卫视", "翡翠台", "明珠台", "凤凰",
+    "北京", "上海", "天津", "重庆", "广东", "广州", "深圳",
+    "浙江", "江苏", "南京", "苏州", "湖南", "湖北", "武汉",
+    "山东", "青岛", "河南", "郑州", "河北", "石家庄",
+    "四川", "成都", "安徽", "合肥", "福建", "福州", "厦门",
+    "江西", "南昌", "陕西", "西安", "山西", "太原",
+    "辽宁", "沈阳", "大连", "吉林", "长春", "黑龙江", "哈尔滨",
+    "云南", "昆明", "贵州", "贵阳", "甘肃", "兰州",
+    "新疆", "乌鲁木齐", "内蒙古", "广西", "南宁", "海南",
+    "宁夏", "青海", "西藏", "香港", "澳门", "台湾",
+]
+
 GROUPS = {
     "央视频道": ["CCTV"],
     "卫视频道": ["卫视", "星空卫视", "翡翠台", "明珠台", "凤凰"],
-    "地方台":   ["北京", "上海", "天津", "重庆", "广东", "广州", "深圳", "浙江", "江苏",
-                 "南京", "苏州", "湖南", "湖北", "武汉", "山东", "青岛", "河南", "郑州",
-                 "河北", "石家庄", "四川", "成都", "安徽", "合肥", "福建", "福州", "厦门",
-                 "江西", "南昌", "陕西", "西安", "山西", "太原", "辽宁", "沈阳", "大连",
-                 "吉林", "长春", "黑龙江", "哈尔滨", "云南", "昆明", "贵州", "贵阳",
-                 "甘肃", "兰州", "新疆", "乌鲁木齐", "内蒙古", "广西", "南宁", "海南",
-                 "宁夏", "青海", "西藏", "香港", "澳门", "台湾"],
+    "地方台":   KEEP[5:],   # 省市关键词
 }
 
 # ============ 函数区 ============
 
 def fetch(url):
     try:
-        return requests.get(url, timeout=12, headers=HEADERS).text
-    except Exception:
+        return requests.get(url, timeout=TIMEOUT, headers=HEADERS).text
+    except Exception as e:
+        print(f"[拉取失败] {url}  {e}")
         return ""
 
 def parse(text):
@@ -52,7 +61,7 @@ def parse(text):
     return items
 
 def alive(url):
-    """拉 m3u8 首段，200 且含 #EXTM3U 与至少一个分片/子列表才判活"""
+    """拉 m3u8 首段，200 且含 #EXTM3U 与分片/子列表才判活"""
     try:
         r = requests.get(url, timeout=TIMEOUT, headers=HEADERS, allow_redirects=True)
         if r.status_code != 200:
@@ -76,13 +85,12 @@ def clean_name(name):
     return n
 
 def norm(name):
-    """归一化：去空格、去括号、去画质后缀、去横杠，用于去重"""
+    """归一化用于去重：去空格、去括号、去画质后缀、去横杠"""
     n = clean_name(name)
     n = re.sub(r"\s+", "", n)
     return n.upper()
 
 def match_group(name):
-    """根据频道名判断分组"""
     n = name.upper().replace("-", "").replace(" ", "")
     for grp, kws in GROUPS.items():
         for kw in kws:
@@ -91,7 +99,7 @@ def match_group(name):
     return "其他频道"
 
 def sort_key(name):
-    """央视按数字序；卫视、地方、其他依次在后"""
+    """央视按数字序；卫视其次；地方/其他在后"""
     m = re.search(r"CCTV[- ]?(\d+)", name, re.I)
     if m:
         return (0, int(m.group(1)), name)
@@ -99,14 +107,22 @@ def sort_key(name):
         return (1, 0, name)
     return (2, 0, name)
 
+def _alarm(*_):
+    raise TimeoutError("hard limit reached")
+
 # ============ 主流程 ============
 
 def main():
-    pool = {}          # norm(name) -> (name, url)
+    try:
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.alarm(HARD_LIMIT)
+    except Exception:
+        pass  # Windows 无 SIGALRM，忽略
+
+    pool = {}
     for u in UPSTREAMS:
         text = fetch(u)
         if not text:
-            print(f"[跳过] 拉取失败: {u}")
             continue
         for name, url in parse(text):
             key = norm(name)
@@ -114,19 +130,26 @@ def main():
                 continue
             pool[key] = (name, url)
 
-    print(f"候选 {len(pool)} 个，开始测活...")
+    # 关键词粗筛，砍掉无关频道
+    pool = {k: v for k, v in pool.items()
+            if any(w.upper().replace(" ", "") in k for w in KEEP)}
+
+    print(f"粗筛后候选 {len(pool)} 个，开始测活...")
 
     good = []
-    with cf.ThreadPoolExecutor(max_workers=16) as ex:
-        futs = {ex.submit(alive, v[1]): k for k, v in pool.items()}
-        for f in cf.as_completed(futs):
-            if f.result():
-                good.append(pool[futs[f]])
+    try:
+        with cf.ThreadPoolExecutor(max_workers=16) as ex:
+            futs = {ex.submit(alive, v[1]): k for k, v in pool.items()}
+            for f in cf.as_completed(futs):
+                if f.result():
+                    good.append(pool[futs[f]])
+    except TimeoutError:
+        print("[硬超时] 停止测活，写入已存活频道")
+    except Exception as e:
+        print(f"[测活异常] {e}")
 
-    # 按央视->卫视->其他 排序，央视内部按数字
     good.sort(key=lambda x: sort_key(x[0]))
 
-    # 统计每组数量
     stat = {}
     for name, url in good:
         g = match_group(name)
@@ -141,6 +164,7 @@ def main():
             fp.write(f'#EXTINF:-1 group-title="{grp}",{disp}\n{url}\n')
 
     print(f"存活 {len(good)} 个频道，已写入 {OUT}")
+    print("最终频道:", [clean_name(n) for n, _ in good])
 
 if __name__ == "__main__":
     main()
