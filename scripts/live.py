@@ -17,12 +17,22 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
    地址里写着 cctv5 却标成 CCTV3 → 丢弃。这类"换台"在免费源里非常常见。
 5. 新增"终审"：间隔十几秒抓两次节目单，只有切片真的在往前滚才算在直播。广告 /
    电影循环源是固定文件（要么带 ENDLIST，要么序列不动），一律丢弃，不再留作备胎。
-6. 可信度只影响排序，不再一票否决：低可信上游的源只要通过终审仍然会用，但会
-   在日志里点名为 [弱源]。上一版把低可信源一律过滤，主上游一挂央视就整体清零。
-7. 上游列表会被体检：返回的条数太少、或里面一条央视都没有，就判定为失效并按最差
-   权重处理，同时打印 [上游失效]。fanmingming 的 repo 路径 2026-11 变成 404，
-   正是这条静默故障让央视整组消失的。
-8. 只依赖本文件，不需要任何额外的配置文件。
+6. 三级优先选线（这是本版最关键的改动）：
+     ① 可信上游 + 已验证在直播
+     ② 可信上游 + 这次测不到（GitHub 的机器在境外，连不上国内源是常态）
+     ③ 弱上游   + 已验证        ← 只在前两级都拿不到时用，日志点名
+   为什么要把②排在③前面：CI 能测通的往往只剩 iptv-org 这类贴错标签的源，
+   而那正是"点 CCTV3 出来是卖药广告"的来源。宁可给一条没验证过的国内可信源。
+   第②级只对央视/卫视/CGTN 开放 —— 地方台上千个，全放进来会塞满打不开的地址。
+7. 上游列表会被体检：条数过少、或里面一条央视都没有，判为"内容异常"并按最差权重
+   处理，同时打印 [上游检查]。fanmingming 的仓库路径和他域名下的 iptv.m3u 在
+   2026-11 都已 404，正是这种静默失效让央视整组消失的。
+9. 清洗 TVBox txt 风格的地址尾缀（`http://x/y.m3u8$LR•IPV4『线路138』`），并丢掉
+   rtp/udp 组播地址。YueChan 列表里 CCTV3~17 全是 rtp://239.x.x.x，影视仓根本
+   播不了 —— 这是央视整组缺失的第二个原因（第一个是上游 404）。
+10. 纯英文名的境外小台（HarbinComprehensiveNewsChannel 之类）直接丢弃，把测活
+   名额留给央视和卫视。
+11. 只依赖本文件，不需要任何额外的配置文件。
 """
 
 import os
@@ -57,24 +67,34 @@ HEADERS = {"User-Agent": UA, "Accept": "*/*"}
 # 他的 tv/ 目录只剩台标 png），列表搬到了自己的域名 live.fanmingming.cn。
 # 所以这里同时挂多个来源，任何一个挂掉都不该让某个频道组整体消失。
 UPSTREAMS = [
-    ("https://live.fanmingming.cn/tv/m3u/iptv.m3u", 0),
-    ("https://live.fanmingming.cn/tv/m3u/ipv6.m3u", 1),
-    ("https://cdn.jsdelivr.net/gh/YueChan/Live@main/IPTV.m3u", 1),
-    ("https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u", 1),
-    ("https://cdn.jsdelivr.net/gh/vbskycn/iptv@master/tv/iptv4.m3u", 2),
-    ("https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u", 2),
+    # 国内维护、以 IPv4 单播为主的列表，优先用（2026-11 实测均可解析到 20+ 个央视台）
+    ("https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u", 1),
+    ("https://cdn.jsdelivr.net/gh/suxuang/myIPTV@main/ipv4.m3u", 1),
+    ("https://raw.githubusercontent.com/wwb521/live/main/tv.m3u", 1),
+    ("https://cdn.jsdelivr.net/gh/wwb521/live@main/tv.m3u", 1),
+    ("https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u", 2),
+    ("https://cdn.jsdelivr.net/gh/YueChan/Live@main/IPTV.m3u", 2),
+    ("https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u", 3),
+    ("https://cdn.jsdelivr.net/gh/vbskycn/iptv@master/tv/iptv4.m3u", 3),
     # 社区爬的，贴错标签比例高，只当最后手段
     ("https://iptv-org.github.io/iptv/countries/cn.m3u", 6),
 ]
 
 MAX_WORKERS = 24
-PER_CH_CANDIDATES = 6      # 每个频道最多留几个地址去测（上游多了，候选也该多留）
+# 每台留几个候选去测。央视名额最多：免费源里它们最容易被 rtp 组播 / 境外灰产源占坑，
+# 多试几条才有一条真能播的；卫视次之；其余给少一些，避免把时间全花在地方台上。
+CAND_CCTV, CAND_WS, CAND_OTHER = 8, 5, 3
+# 终审（抓两轮节目单）每条要等十几秒，所以只验最靠前的几条：
+# 央视/卫视验 5 条，其余 2 条
+CHECK_CCTV, CHECK_OTHER = 5, 2
 # 每个频道输出几条线路。默认 1 条：影视仓在第一条播失败时会静默切到下一条，
 # 多给几条等于给它机会跳到灰产源上（这正是"有时正常有时出广告"的来源之一）
 PER_CH_LINES = int(os.environ.get("PER_CH_LINES", "1"))
 PLAYLIST_LIMIT = 512 * 1024
 SEG_BYTES = 4096
 STALE_SECONDS = 1800       # 切片超过 30 分钟没更新才算定格（太严会误杀打包源）
+TRUST_OK = 3               # 可信度 <= 3 的上游：这次测不通也保留（CI 在境外，测不通≠源坏）
+WEAK_TRUST = 6             # >= 这个可信度算"弱源"，只在前两级都拿不到时才用
 # 通过校验的频道占比低于这个值只报警、不中止（写出去的都是验证过的，安全）
 MIN_COVERAGE = float(os.environ.get("MIN_COVERAGE", "0.5"))
 
@@ -159,19 +179,34 @@ def canon(name):
 
 
 _CCTV_OK = re.compile(r"^CCTV\d{1,2}(\+|PLUS)?(欧洲|美洲|亚洲|海外)?$")
+# "1995年""1996年""2024年" 这类是某些列表里的历年春晚/年播目录，不是频道
+_JUNK_CH = re.compile(r"^((19|20)\d{2}|\d+$|测试|备用|直播源)")
 _CCTV_CN = re.compile(r"^CCTV[\u4e00-\u9fa5][\u4e00-\u9fa5&·]{1,9}$")
 
 
 def valid_ch(ch):
-    """挡住假台名：iptv-org 里有一堆 "CCTV+1"、"CCTVStormFootball"、
-    "CCTVWomen'sFashion" 这类把境外台挂上 CCTV 前缀的条目，留着只会占位。"""
+    """挡住假台名和垃圾条目：iptv-org 里有一堆 "CCTV+1"、"CCTVStormFootball"、
+    "CCTVWomen'sFashion" 这类把境外台挂上 CCTV 前缀的条目；另外有些列表混进
+    "1995年"、"1996年" 这种历年春晚目录，一条一个台，会把频道表撑到五百多个。"""
+    if not ch or _JUNK_CH.match(ch):
+        return False
     if not ch.startswith("CCTV"):
+        # 纯英文名（HarbinComprehensiveNewsChannel、ABCNewsLive…）基本都是境外的
+        # 小型转播站，既不是你要的台，又最容易出现"换台/广告"。清掉它们能把测活
+        # 名额留给央视和卫视 —— 之前 1084 个频道里将近一半是这种东西。
+        if not re.search(r"[\u4e00-\u9fa5]", ch):
+            return False
         return True
     if ch in ("CCTV4K", "CCTV8K"):
         return True
     if _CCTV_OK.match(ch):
         return True
     return bool(_CCTV_CN.match(ch))      # 央视付费频道：CCTV怀旧剧场 / CCTV文化精品
+
+
+def is_main_ch(ch):
+    """央视 / CGTN / 卫视 —— 用户真正在看的台，值得给"未验证也保留"的待遇。"""
+    return ch.startswith(("CCTV", "CGTN")) or "卫视" in ch
 
 
 def group_of(ch):
@@ -214,6 +249,19 @@ def fetch_text(url, timeout=(6, 15), retries=2):
     return None
 
 
+def clean_url(u):
+    """清掉 TVBox txt 风格的尾巴。很多列表写成
+        http://host/x.m3u8$LR•IPV4『线路138』
+    `$` 后面是分组标记，不是地址的一部分；不切掉的话这条 URL 100% 打不开，
+    而这类列表恰恰是央视 3~11 覆盖最全的那种。
+    """
+    u = (u or "").strip()
+    for sep in ("$", "|"):
+        if sep in u:
+            u = u.split(sep, 1)[0]
+    return u.strip()
+
+
 def parse(text):
     """解析 m3u，保留 tvg-id / tvg-logo，供后面做交叉校验和图标"""
     out = []
@@ -234,7 +282,7 @@ def parse(text):
         elif line.startswith("#"):
             continue
         elif cur is not None:
-            cur["url"] = line
+            cur["url"] = clean_url(line)
             out.append(cur)
             cur = None
     return out
@@ -353,20 +401,27 @@ def inspect(url):
 
 
 def score(entry):
-    """数字越小越优先"""
-    s = 0
+    """数字越小越优先。
+
+    核心是一条反直觉的取舍：**可信上游"这次没测通"的源，要排在不那么可信但"测通了"
+    的源前面**。因为跑测机（GitHub Actions）在境外，连不上国内源是常态 —— 上一版把
+    "测不通"当"死了"，结果央视 3、4、5…13 在 CI 里全被判死（日志里那些"无源频道"），
+    而能测通的偏偏是 iptv-org 那种贴错标签率极高的源，正是"点 CCTV3 出广告"的来源。
+    """
+    trust = int(entry.get("trust", 9))
+    trusted = trust <= TRUST_OK
     st = entry.get("state")
     if st == "live":
-        s += 0
+        base = 0 if trusted else 40        # 低可信上游就算测通了，也未必是这个台
     elif st == "rawts":
-        s += 12
-    elif st == "endlist":        # 点播文件（广告 / 电影循环）只能当备胎
-        s += 40
-    else:                        # 没通过校验
-        s += 200
-    s += int(entry.get("trust", 9)) * 4
+        base = 12 if trusted else 50
+    elif st == "unverified":
+        base = 20                          # 可信上游 + 这次测不到 → 家里大概率能播
+    else:                                  # endlist / frozen / dead
+        base = 900
+    s = base + trust * 2
     if not entry["url"].lower().startswith("https"):
-        s += 2
+        s += 1
     return s
 
 
@@ -537,10 +592,18 @@ def main():
     for it in entries:
         it["ch"] = canon(it["name"])
     entries = [e for e in entries if e.get("ch") and e.get("url")]
+
+    # 1.5) rtp/udp/rtsp 组播地址影视仓根本播不了（YueChan 的 CCTV3~17 全是这种），
+    #      留着只会白占测活名额，让真正能播的候选轮不上
+    n0 = len(entries)
+    entries = [e for e in entries if e["url"].lower().startswith(("http://", "https://"))]
+    if n0 != len(entries):
+        log(f"[协议] 丢弃 {n0 - len(entries)} 条非 http 地址（rtp/udp 组播，影视仓播不了）")
+
     before = len(entries)
     entries = [e for e in entries if valid_ch(e["ch"])]
     if before != len(entries):
-        log(f"[假台名] 丢弃 {before - len(entries)} 条挂着 CCTV 前缀的境外台")
+        log(f"[垃圾条目] 丢弃 {before - len(entries)} 条假台名 / 年份目录 / 测试条目")
     log(f"[归一化后] 共 {len(entries)} 条")
 
     # 2) 交叉校验：同一地址被不同上游标成不同频道 → 贴错标签，丢弃
@@ -566,7 +629,8 @@ def main():
     if drop:
         log(f"[台号不符] 丢弃 {drop} 个地址内台号与名称不一致的源")
 
-    # 4) 按频道聚合并裁剪候选
+    # 4) 按频道聚合并裁剪候选。候选数分级：央视给最多名额，因为免费源里它们
+    #    最容易被 rtp 组播和境外灰产源占坑，得多试几条才有一条真的
     by_ch = {}
     for e in entries:
         d = by_ch.setdefault(e["ch"], {"name": e["ch"], "logo": "", "cands": []})
@@ -575,9 +639,15 @@ def main():
         if e["url"] not in [c["url"] for c in d["cands"]]:
             d["cands"].append(e)
 
-    for d in by_ch.values():
+    for ch, d in by_ch.items():
         d["cands"].sort(key=score)
-        d["cands"] = d["cands"][:PER_CH_CANDIDATES]
+        if ch.startswith(("CCTV", "CGTN")):
+            n = CAND_CCTV
+        elif "卫视" in ch:
+            n = CAND_WS
+        else:
+            n = CAND_OTHER
+        d["cands"] = d["cands"][:n]
 
     log(f"[频道] 归并后 {len(by_ch)} 个，待测候选 {sum(len(d['cands']) for d in by_ch.values())} 条")
 
@@ -599,42 +669,57 @@ def main():
                     res = None
                 if res:
                     c["state"] = res["state"]
+                elif int(c.get("trust", 9)) <= TRUST_OK and is_main_ch(c["ch"]):
+                    # 跑测机网络到不了 ≠ 源死了。可信列表里的源留着，排在验证过的后面。
+                    # 只对央视/卫视开这个口子：地方台数量上千，全放进来会有大量打不开的地址
+                    c["state"] = "unverified"
                 else:
                     c["state"] = "dead"
 
-    # 6) 组候选池。可信度只用来排序，不用来"一票否决"：
-    #    上一版把低可信上游的央视源全部过滤，结果主上游一挂，央视整体清零 ——
-    #    用户看到的是"一个中央台都没了"。现在改为：高可信优先，不够就用低可信
-    #    但通过终审的顶上去，并在日志里点名，方便判断要不要换上游。
-    pool_of = {}
-    for ch, d in by_ch.items():
-        live_c = [c for c in d["cands"] if c["state"] == "live"]
-        raw_c = [c for c in d["cands"] if c["state"] == "rawts"]
-        pool_of[ch] = (sorted(live_c, key=score), sorted(raw_c, key=score))
-
-    # 7) 终审：每台最多验前 5 条（高可信的排在前面），时间花在刀刃上
+    # 6) 终审：只验"能取到节目单"的候选，央视/卫视多验几条
     to_check = []
-    for lc, _ in pool_of.values():
-        to_check.extend([c["url"] for c in lc[:5]])
+    for ch, d in by_ch.items():
+        vc = [c for c in d["cands"] if c["state"] == "live"]
+        n = CHECK_CCTV if is_main_ch(ch) else CHECK_OTHER
+        to_check.extend([c["url"] for c in sorted(vc, key=score)[:n]])
     ok_map = confirm_many(to_check)
 
-    out, empty, weak = [], [], []
+    # 终审结论回写：序列不动的（点播广告 / 定格）单独标 frozen，和"没测到"区分开
+    for d in by_ch.values():
+        for c in d["cands"]:
+            if c["url"] in ok_map and c["state"] == "live" and not ok_map[c["url"]]:
+                c["state"] = "frozen"
+
+    # 7) 选线：每台 1 条，按三级优先级取第一个能用的
+    #    ① 可信上游 + 已验证在直播
+    #    ② 可信上游 + 这次测不到（CI 在境外，家里大概率能播）
+    #    ③ 弱上游 + 已验证     ← 只在前两级都没有时才用，日志点名
+    #    弱上游 + 测不到 → 直接扔（既不准又不知道活没活）
+    out, empty, weak, unver = [], [], [], []
     for ch, d in by_ch.items():
-        lc, rc = pool_of[ch]
-        picked = [c for c in lc if ok_map.get(c["url"])]
-        if not picked:
-            picked = rc[:PER_CH_LINES]       # 裸 TS 无从做序列校验，只在没有确认源时兜底
-        if not picked:
+        cands = [c for c in d["cands"] if c["state"] in ("live", "rawts", "unverified")]
+        cands.sort(key=score)
+        if not cands:
             empty.append(ch)
             continue
-        if int(picked[0].get("trust", 9)) >= 6:
+        best = cands[0]
+        trust = int(best.get("trust", 9))
+        if trust >= WEAK_TRUST:
             weak.append(ch)
-            log(f"  [弱源] {ch} 只剩低可信上游的地址可用，未必是本站，慎用")
-        out.append((ch, d["name"], d["logo"], picked[:PER_CH_LINES]))
+        if best["state"] == "unverified":
+            unver.append(ch)
+        out.append((ch, d["name"], d["logo"], [best][:PER_CH_LINES]))
 
     final = out
     coverage = len(final) / max(1, len(by_ch))
     log(f"[成片率] {coverage:.0%}（{len(final)}/{len(by_ch)} 个频道）")
+    if weak:
+        log(f"[弱源] {len(weak)} 个台用的是低可信上游（贴错标签风险高）："
+            + ", ".join(sorted(weak)[:24]) + (" ..." if len(weak) > 24 else ""))
+    if unver:
+        log(f"[未验证] {len(unver)} 个台的地址这次没测通，取自可信列表（家里通常能播）："
+            + ", ".join(sorted(unver)[:24]) + (" ..." if len(unver) > 24 else ""))
+        log("         点开没反应 = 这条真死了，不会跳到别的台；告诉我台名我换源。")
 
     # 写出去的每一条都是"确认在直播"的，所以成片率低只报警、不中止：
     # 少几个台，总比多几个广告台好。成片率 0 才说明这次网络完全不通，保留旧文件。
@@ -689,8 +774,6 @@ def main():
     cctv_cnt = sum(1 for x in final if x[0].startswith(("CCTV", "CGTN")))
     if cctv_cnt == 0:
         log("[严重] 本次一个中央台都没生成 —— 上游列表大概率全部失效，请看上面 [上游失效] 那几行")
-    if weak:
-        log(f"[弱源台] {len(weak)} 个：{', '.join(sorted(weak)[:20])}")
     log(f"[完成] 频道 {len(final)} 个（央视 {cctv_cnt}）/ 线路 {len(lines) // 2} 条 / 单线路频道 {one_line} 个")
     log(f"[输出] {OUTPUT}")
     return 0
