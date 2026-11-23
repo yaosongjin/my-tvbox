@@ -1,5 +1,3 @@
-import json
-import os
 import re
 import signal
 import requests
@@ -59,8 +57,12 @@ def norm(name):
 
 
 def clean_name(name):
-    name = re.sub(r"\[.*?\]", "", name).strip()
-    return name
+    """去 [xx]、去 HD/FHD/UHD/高清/超清、去括号分辨率"""
+    n = re.sub(r"\[.*?\]", "", name)
+    n = re.sub(r"[（(]\s*\d+[pPiI]+\s*[)）]", "", n)
+    n = re.sub(r"\s*(F?U?HD|高清|超清)\s*", "", n, flags=re.I)
+    n = re.sub(r"\s+", " ", n).strip()
+    return n
 
 
 def fetch(url):
@@ -74,13 +76,16 @@ def fetch(url):
 
 
 def parse(text):
+    """#EXTINF 后向下找第一条 http，跳过 #EXTVLCOPT/#KODIPROP"""
     lines = [x.strip() for x in text.splitlines() if x.strip()]
     for i, line in enumerate(lines):
         if not line.startswith("#EXTINF"):
             continue
         name = line.split(",", 1)[-1].strip()
-        if i + 1 < len(lines) and lines[i + 1].startswith("http"):
-            yield name, lines[i + 1]
+        for j in range(i + 1, min(i + 6, len(lines))):
+            if lines[j].startswith("http"):
+                yield name, lines[j]
+                break
 
 
 def match_group(name):
@@ -105,13 +110,18 @@ def alive(url):
     if not url.startswith("http"):
         return False
     try:
-        r = requests.get(url, timeout=TIMEOUT, headers=HEADERS, stream=True)
-        ok = r.status_code == 200 and (
-            "mpegurl" in r.headers.get("Content-Type", "").lower()
-            or "#extm3u" in r.text[:200].lower()
-        )
-        r.close()
-        return ok
+        r = requests.get(url, timeout=TIMEOUT, headers=HEADERS, allow_redirects=True)
+        if r.status_code != 200:
+            return False
+        head = r.text[:512].lower()
+        for bad in ("you don't have authorization", "403 forbidden", "not found", "拒绝访问"):
+            if bad in head:
+                return False
+        if "#extm3u" not in head:
+            return False
+        if "#ext-x-stream-inf" not in head and ".ts" not in head and ".m3u8" not in head:
+            return False
+        return True
     except Exception:
         return False
 
@@ -169,3 +179,11 @@ def main():
         for name, url in good:
             disp = clean_name(name)
             grp = match_group(disp)
+            fp.write(f'#EXTINF:-1 group-title="{grp}",{disp}\n{url}\n')
+
+    print(f"存活 {len(good)} 个频道，已写入 {OUT}")
+    print("最终频道:", [clean_name(n) for n, _ in good])
+
+
+if __name__ == "__main__":
+    main()
