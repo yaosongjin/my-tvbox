@@ -45,14 +45,6 @@
     },
     {
       "key": "s6",
-      "name": "电影天堂",
-      "type": 1,
-      "api": "http://caiji.dyttzyapi.com/api.php/provide/vod/",
-      "searchable": 1,
-      "filterable": 1
-    },
-    {
-      "key": "s7",
       "name": "极速资源",
       "type": 1,
       "api": "https://jszyapi.com/api.php/provide/vod/",
