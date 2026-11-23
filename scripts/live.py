@@ -14,7 +14,6 @@ HEADERS = {
     "Referer": "https://tv.cctv.com/",
 }
 
-# 白名单用「去横杠大写」比对，CCTV-6 与 CCTV6 都能命中
 WHITELIST = [
     "CCTV-1", "CCTV-2", "CCTV-3", "CCTV-4", "CCTV-5", "CCTV-6",
     "CCTV-7", "CCTV-8", "CCTV-9", "CCTV-10", "CCTV-11", "CCTV-12",
@@ -23,7 +22,7 @@ WHITELIST = [
     "广东卫视", "山东卫视", "安徽卫视", "湖北卫视", "四川卫视",
 ]
 
-# CCTV6 兜底源：上游全挂时至少留一条，按你实测能播的填
+# CCTV6 兜底源：上游全挂时至少留一条，换成你实测能播的
 CCTV6_FALLBACK = [
     "http://74.91.26.218:82/live/cctv6hd.m3u8",
     "http://69.38.245.59/live/cctv6.m3u8",
@@ -105,6 +104,14 @@ def norm(name):
     return n
 
 
+def clean_name(name):
+    """显示名去掉 HD/FHD/UHD/高清/超清 及括号分辨率后缀"""
+    n = re.sub(r"[（(]\s*\d+[pP][^)）]*[)）]", "", name)
+    n = re.sub(r"\s*(F?U?HD|高清|超清)\s*", "", n, flags=re.I)
+    n = re.sub(r"\s+", " ", n).strip()
+    return n
+
+
 def match_whitelist(name):
     """去横杠比对，CCTV6 / CCTV-6 / CCTV-6 HD 都能命中"""
     n = name.upper().replace("-", "").replace(" ", "")
@@ -147,11 +154,11 @@ def main():
             if f.result():
                 good.append(pool[futs[f]])
 
-    # CCTV6 兜底：上游没有或判死，就从 FALLBACK 里挑一条能活的补上
+    # CCTV6 兜底
     if not any("CCTV6" in norm(n) for n, _ in good):
         for fb in CCTV6_FALLBACK:
             if alive(fb):
-                good.append(("CCTV-6 HD (1080p)", fb))
+                good.append(("CCTV-6", fb))
                 print(f"[兜底] CCTV6 使用备用源: {fb}")
                 break
 
@@ -166,10 +173,11 @@ def main():
     with open(OUT, "w", encoding="utf-8") as fp:
         fp.write('#EXTM3U x-tvg-url="https://epg.pw/xmltv/epg_CN.xml"\n')
         for name, url in good:
-            logo = logo_for(name)
-            grp = "央视频道" if "CCTV" in name.upper() else "卫视频道"
+            disp = clean_name(name)
+            logo = logo_for(disp)
+            grp = "央视频道" if "CCTV" in disp.upper() else "卫视频道"
             attr = f'tvg-logo="{logo}" ' if logo else ""
-            fp.write(f'#EXTINF:-1 {attr}group-title="{grp}",{name}\n{url}\n')
+            fp.write(f'#EXTINF:-1 {attr}group-title="{grp}",{disp}\n{url}\n')
 
     print(f"存活 {len(good)} 个频道")
 
