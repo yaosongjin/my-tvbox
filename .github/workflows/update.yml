@@ -34,9 +34,32 @@ jobs:
       - name: update live
         continue-on-error: true
         env:
-          PER_CH_LINES: '1'
+          # 每个台给几条线路。播不出画面时影视仓会顺着列表往下走：一个台只有 1 条，
+          # 它就只能掉到下一个台（"点 CCTV1 播 CCTV5+" 就是这么来的）。给同一台连着
+          # 几条，失败后还在这台里打转，列表里也能自己点「CCTV1 线路2」。
+          LINES_CCTV: '4'
+          LINES_WS: '3'
+          LINES_OTHER: '1'
           MIN_COVERAGE: '0.5'
         run: python scripts/live.py
+
+      - name: summary
+        if: always()
+        run: |
+          lines=$(grep -c '^#EXTINF' live.m3u 2>/dev/null || echo 0)
+          channels=$(grep -o 'tvg-id="[^"]*"' live.m3u 2>/dev/null | sort -u | wc -l)
+          cctv=$(grep -o 'tvg-id="CCTV[^"]*"' live.m3u 2>/dev/null | sort -u | wc -l)
+          wei=$(grep -o 'tvg-id="[^"]*卫视"' live.m3u 2>/dev/null | sort -u | wc -l)
+          echo "### 本次生成结果" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 项目 | 数量 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 频道数 | $channels |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 线路总数 | $lines |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 央视频道 | $cctv |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 卫视频道 | $wei |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "央视数为 0 → 看上一次日志的 [上游检查] 那几行，把失效地址发出来换源。" >> "$GITHUB_STEP_SUMMARY"
 
       - name: commit
         run: |
