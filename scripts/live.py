@@ -43,7 +43,30 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
     d) 日志会列出 [存疑]（央视却没有台号线索）和 [批量源]（一个入口分发多个台），
        这两类点开最容易发现串台。
 13. BLOCK_HOSTS：已知串台的主机写进这个常量即可永久拉黑，不用等上游修。
-14. 只依赖本文件，不需要任何额外的配置文件。
+14. 2026-11-24 修"央视主台全走未验证兜底、内容无人确认"的问题：
+    a) 排序从"一堆加减法"改成分档 (档位, 档内细项)。档位顺序：可信+已验证 >
+       可信+裸TS > 可信+未验证 > 弱源+已验证 > 弱源+裸TS。档与档绝对成立，
+       不会再出现某个加分项把未验证的源顶到已验证前面。
+    b) 新增"上游共识"：同一条地址被几个独立上游收录（raw 与 jsdelivr 镜像算一条，
+       不重复计票）。收得越多越可信，每条 -2、最多 -6。灰产转播站通常只被一两个
+       野鸡列表收录，正规源会被多个国内列表同时收录 —— 这是"未验证"状态下唯一
+       拿得到、又和内容有关的质量信号。
+    c) [未验证] 日志现在会算出其中的央视/卫视各几个。那才是真正的风险面：CI 在
+       境外，央视主台往往整组落进这一档，点开串台的概率就集中在这里。
+15. 2026-11-24 晚：一个台给多条线路（用户要求"让用户自己也能选择"）。
+    用户的实际观察是："不会直接从 CCTV1 跳到 CCTV5+ 了，只是把跳转时间放慢了，
+    CCTV1 还是看不到画面"。这恰好说明了机制：影视仓播不出画面时**顺着播放列表往
+    下走**，一个台只有 1 条线路，它就没得选，只能掉到下一个频道 —— 5+ 在列表里离
+    得很近，看着就像"CCTV1 变成了 CCTV5+"。所以：
+    a) 修掉 `[best][:PER_CH_LINES]` 这个 bug —— 它从一个单元素列表切片，导致
+       PER_CH_LINES 写多少都只输出 1 条（workflow 里那个 '1' 从来没生效过，
+       等于一直是硬编码一条）。现在改成 `pick_lines(cands, n)`。
+    b) 线路数量分级：央视 4 / 卫视 3 / 地方台 1（LINES_CCTV / LINES_WS /
+       LINES_OTHER，可用同名环境变量覆盖）。播不出来时先在这台内部打转，同时列表
+       里会并列出现「CCTV1 / CCTV1 线路2 / CCTV1 线路3」，用户能自己点。
+    c) 线路之间按主机去重：同一台主机挂了它下面所有地址一起挂，三条同主机等于一条。
+    d) 央视候选名额 8 → 10，否则凑不出 4 个不同主机。
+16. 只依赖本文件，不需要任何额外的配置文件。
 """
 
 import os
@@ -94,13 +117,28 @@ UPSTREAMS = [
 MAX_WORKERS = 24
 # 每台留几个候选去测。央视名额最多：免费源里它们最容易被 rtp 组播 / 境外灰产源占坑，
 # 多试几条才有一条真能播的；卫视次之；其余给少一些，避免把时间全花在地方台上。
-CAND_CCTV, CAND_WS, CAND_OTHER = 8, 5, 3
+# 央视给到 10 是因为一个台要输出 4 条线路，候选太少就凑不出 4 个不同主机。
+CAND_CCTV, CAND_WS, CAND_OTHER = 10, 5, 3
 # 终审（抓两轮节目单）每条要等十几秒，所以只验最靠前的几条：
 # 央视/卫视验 5 条，其余 2 条
 CHECK_CCTV, CHECK_OTHER = 5, 2
-# 每个频道输出几条线路。默认 1 条：影视仓在第一条播失败时会静默切到下一条，
-# 多给几条等于给它机会跳到灰产源上（这正是"有时正常有时出广告"的来源之一）
-PER_CH_LINES = int(os.environ.get("PER_CH_LINES", "1"))
+# ---------------------------------------------------------------- 每台给几条线路
+#
+# 这是"用户自己选台"和"自动兜底"的唯一手段，也是本版解决"点 CCTV1 看不到画面"的关键。
+#
+# 影视仓播不出画面时，会顺着播放列表往下走：一个台只有 1 条线路，它就没得选，只能掉到
+# 下一个频道 —— "点 CCTV1 结果播 CCTV5+" 就是这么发生的（5+ 在列表里离得很近，看着像
+# 跳台，其实是这条台彻底播不出来，APP 接着播下一条）。给同一个台连着 4 条线路，播不出来
+# 也还在这台里打转，同时列表里会出现"CCTV1 / CCTV1 线路2 / CCTV1 线路3"，用户能自己点。
+#
+# 数量分级：央视最多（免费源里它们最容易被灰产转播站占坑，得多备几条才有一条真能播的），
+# 卫视次之，地方台上千个，给 1 条免得列表膨胀成几千行。
+LINES_CCTV = int(os.environ.get("LINES_CCTV", "4"))
+LINES_WS = int(os.environ.get("LINES_WS", "3"))
+LINES_OTHER = int(os.environ.get("LINES_OTHER", "1"))
+_GLOBAL_LINES = os.environ.get("PER_CH_LINES")
+if _GLOBAL_LINES:                 # 兼容老变量：设了就三档统一按它走
+    LINES_CCTV = LINES_WS = LINES_OTHER = int(_GLOBAL_LINES)
 PLAYLIST_LIMIT = 512 * 1024
 SEG_BYTES = 4096
 STALE_SECONDS = 1800       # 切片超过 30 分钟没更新才算定格（太严会误杀打包源）
@@ -160,6 +198,21 @@ def url_ch_hint(url, want):
 def host_of(url):
     m = re.match(r"^https?://([^/?#]+)", url or "", re.I)
     return m.group(1).lower() if m else ""
+
+
+# 同一个仓库的 raw / jsdelivr 镜像其实是同一份列表，算票时不能给它们各记一票，
+# 否则等于自己给自己刷票。
+_GH_RE = re.compile(
+    r"(?:raw\.githubusercontent\.com/|cdn\.jsdelivr\.net/gh/)([^/]+)/([^/@]+)", re.I
+)
+
+
+def up_group(url):
+    """把上游地址归成"独立列表"的标识：镜像合并成一组，其余按主机名分组。"""
+    m = _GH_RE.search(url or "")
+    if m:
+        return "gh:" + (m.group(1) + "/" + m.group(2)).lower()
+    return host_of(url) or (url or "")
 
 
 def is_blocked(url):
@@ -459,34 +512,76 @@ def inspect(url):
 
 
 def score(entry):
-    """数字越小越优先。
+    """返回 (档位, 档内细项)，数字越小越优先。
 
-    核心是一条反直觉的取舍：**可信上游"这次没测通"的源，要排在不那么可信但"测通了"
-    的源前面**。因为跑测机（GitHub Actions）在境外，连不上国内源是常态 —— 上一版把
-    "测不通"当"死了"，结果央视 3、4、5…13 在 CI 里全被判死（日志里那些"无源频道"），
-    而能测通的偏偏是 iptv-org 那种贴错标签率极高的源，正是"点 CCTV3 出广告"的来源。
+    第一层是"档位"。把优先级写成分档而不是一堆加减法，档与档之间的关系就是绝对的，
+    不会再出现"某个加分项把未验证的源顶到已验证前面"这种事：
+
+        0  可信上游 + 已确认在直播
+        1  可信上游 + 裸 TS（解不出节目单，但地址通）
+        2  可信上游 + 这次没测通      ← CI 在境外，连不上国内源是常态
+        3  弱上游   + 已确认在直播
+        4  弱上游   + 裸 TS
+        9  死了 / 点播广告 / 定格
+
+    为什么档 2 要排在档 3 前面：跑测机（GitHub Actions）在境外，能测通的往往只剩
+    iptv-org 这类贴错标签率极高的源，而那正是"点 CCTV3 出来是卖药广告"的来源。
+    宁可给一条没验证过的国内可信源，也不给一条验证过但很可能是广告的弱源。
+
+    第二层是档内怎么排：
+      - 上游可信度：数字越小越优先
+      - 台号自证：地址里写着 cctv1 / 0001 的往前（路径自证 -8 > 仅 query 自证 -4 >
+        看不出 0）。这是"点 CCTV1 播出 5+"唯一可编程的判据
+      - 上游共识：同一条地址被几个独立上游收录，收得越多越可信（每票 -2，最多 -6）。
+        灰产转播站通常只被一两个野鸡列表收录，正规源会被多个国内列表同时收录。
+        这一项对档 2（未验证）尤其关键 —— 那些源除此之外没有任何质量信号可用。
     """
     trust = int(entry.get("trust", 9))
     trusted = trust <= TRUST_OK
     st = entry.get("state")
     if st == "live":
-        base = 0 if trusted else 40        # 低可信上游就算测通了，也未必是这个台
+        tier = 0 if trusted else 3
     elif st == "rawts":
-        base = 12 if trusted else 50
+        tier = 1 if trusted else 4
     elif st == "unverified":
-        base = 20                          # 可信上游 + 这次测不到 → 家里大概率能播
+        tier = 2 if trusted else 9        # 弱源又没有验证结果 = 什么都不知道，直接垫底
     else:                                  # endlist / frozen / dead
-        base = 900
-    s = base + trust * 2
+        tier = 9
+
+    sub = trust * 2
+    sub -= 4 * int(entry.get("ch_hint") or 0)
+    sub -= 2 * min(int(entry.get("consensus") or 1), 3)
     if not entry["url"].lower().startswith("https"):
-        s += 1
-    # 台号能自证（地址里就写着 cctv1 / 0001）的往前挪：这是"点 CCTV1 播出 5+"唯一
-    # 可编程的判据。分两档：路径自证 -8 > 仅 query 自证 -4 > 看不出来 0。
-    # 幅度都不会让"未验证"(20) 顶到"已验证"(0) 前面，只是把不可靠的结构往后压。
-    lvl = int(entry.get("ch_hint") or 0)
-    if lvl:
-        s -= 4 * lvl
-    return s
+        sub += 1
+    return (tier, sub)
+
+
+def pick_lines(cands, n):
+    """从一个台已排序的候选里挑 n 条线路，尽量来自不同主机。
+
+    同一台主机挂了，它下面所有地址是一起挂的 —— 给三条同主机的线路等于只给一条。
+    所以先按主机去重；主机数不够 n 时再放宽（同主机的第二条也比没有强）。
+    排序沿用 score 的结果，所以第一条永远是最值得先试的那条。
+    """
+    picked, hosts = [], set()
+    for c in cands:
+        h = host_of(c["url"])
+        if h and h in hosts:
+            continue
+        hosts.add(h)
+        picked.append(c)
+        if len(picked) >= n:
+            return picked
+    if len(picked) < n:                      # 主机不够，退而求其次按地址补齐
+        have = {c["url"] for c in picked}
+        for c in cands:
+            if c["url"] in have:
+                continue
+            picked.append(c)
+            have.add(c["url"])
+            if len(picked) >= n:
+                break
+    return picked
 
 
 # ---------------------------------------------------------------- 终审：确认"真的在直播"
@@ -640,8 +735,10 @@ def main():
             log("  [上游异常] 内容不像完整的频道表（条数过少或没有央视），权重按最差处理")
             trust = 9
             suspect.append(up)
+        grp = up_group(up)
         for it in got:
             it["trust"] = trust
+            it["grp"] = grp
             entries.append(it)
     log(f"[原始] 共 {len(entries)} 条")
 
@@ -683,6 +780,15 @@ def main():
     by_url = {}
     for e in entries:
         by_url.setdefault(e["url"], []).append(e)
+
+    # 上游共识：同一条地址被几个"独立列表"收录。这是未验证状态下唯一拿得到、又
+    # 和内容有关的信号 —— 灰产转播服务器往往只被一两个野鸡列表收录，正规运营商源
+    # 会被好几个国内列表同时收录。只是排序用，不参与淘汰。
+    for _u, lst in by_url.items():
+        n = len({e.get("grp") for e in lst})
+        for e in lst:
+            e["consensus"] = n
+
     conflict = {u for u, lst in by_url.items() if len({e["ch"] for e in lst}) > 1}
     if conflict:
         winner, dropped = {}, 0
@@ -798,12 +904,13 @@ def main():
             if c["url"] in ok_map and c["state"] == "live" and not ok_map[c["url"]]:
                 c["state"] = "frozen"
 
-    # 7) 选线：每台 1 条，按三级优先级取第一个能用的
+    # 7) 选线：每台按档位排序后取前几条，线路之间尽量不同主机
     #    ① 可信上游 + 已验证在直播
     #    ② 可信上游 + 这次测不到（CI 在境外，家里大概率能播）
     #    ③ 弱上游 + 已验证     ← 只在前两级都没有时才用，日志点名
     #    弱上游 + 测不到 → 直接扔（既不准又不知道活没活）
     out, empty, weak, unver, doubt = [], [], [], [], []
+    multi = 0
     for ch, d in by_ch.items():
         cands = [c for c in d["cands"] if c["state"] in ("live", "rawts", "unverified")]
         cands.sort(key=score)
@@ -821,7 +928,17 @@ def main():
             # 最容易发生的一类，单独吵出来，方便直接拉黑它的主机。
             if ch.startswith(("CCTV", "CGTN")) and not best.get("ch_hint"):
                 doubt.append((ch, best["url"]))
-        out.append((ch, d["name"], d["logo"], [best][:PER_CH_LINES]))
+
+        if ch.startswith(("CCTV", "CGTN")):
+            n_lines = LINES_CCTV
+        elif "卫视" in ch:
+            n_lines = LINES_WS
+        else:
+            n_lines = LINES_OTHER
+        picked = pick_lines(cands, max(1, n_lines))
+        if len(picked) > 1:
+            multi += 1
+        out.append((ch, d["name"], d["logo"], picked))
 
     final = out
     coverage = len(final) / max(1, len(by_ch))
@@ -830,15 +947,25 @@ def main():
         log(f"[弱源] {len(weak)} 个台用的是低可信上游（贴错标签风险高）："
             + ", ".join(sorted(weak)[:24]) + (" ..." if len(weak) > 24 else ""))
     if unver:
+        n_cctv = sum(1 for c in unver if c.startswith(("CCTV", "CGTN")))
+        n_ws = sum(1 for c in unver if "卫视" in c)
         log(f"[未验证] {len(unver)} 个台的地址这次没测通，取自可信列表（家里通常能播）："
             + ", ".join(sorted(unver)[:24]) + (" ..." if len(unver) > 24 else ""))
-        log("         点开没反应 = 这条真死了，不会跳到别的台；告诉我台名我换源。")
+        log(f"         其中央视/CGTN {n_cctv} 个、卫视 {n_ws} 个。这些台的内容本次没有"
+            "任何一条被确认过，")
+        log("         要么播得通、要么点开没反应或串台 —— 点开发现是别的台，告诉我台名，"
+            "我把那条主机拉黑。")
     if doubt:
         log(f"[存疑] {len(doubt)} 个央视台没有能自证台号的源（地址里看不出是哪一台）：")
         for ch, u in doubt[:8]:
             log(f"    {ch}  {u[:78]}")
         log("         这类地址最容易串台。点开发现是别的台，把上面地址的主机名写进")
         log("         BLOCK_HOSTS 即可永久拉黑（或直接告诉我，我加进去）。")
+    if multi:
+        log(f"[多线路] {multi} 个台带了多条线路（列表里显示为「台名 线路2 / 线路3…」）：")
+        log("         播不出画面时，影视仓会在这个台内部换下一条，而不是顺着列表掉到"
+            "下一个台；")
+        log("         也可以自己点「CCTV1 线路2」这种条目手动挑。")
 
     # 单入口脚本（同一 host+path，靠 ?id= 分发所有台）是串台高发结构：一个脚本按
     # 参数查表映射到不同频道，表里错一条就是"点 CCTV1 播 5+"。列出来便于逐个点验。
