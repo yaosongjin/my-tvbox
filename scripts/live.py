@@ -101,7 +101,21 @@ live.py —— 生成影视仓 / TVBox 用的直播源（live.txt 主输出 + li
        继续可用，不会因为换格式突然全黑。
     d) 兜底：万一某个版本的影视仓不认 # 分隔，地址里 # 之后的部分按 URL 规范属于
        fragment，不会被发给服务器 —— 最坏情况退回"只播第一条"，不会整台播不了。
-19. 只依赖本文件，不需要任何额外的配置文件。
+19. 2026-11-24 五改：解决"每个台只有一个源"（用户刷新缓存后的新反馈）。
+    列表已经不重复了、CCTV1/2 也能播了，但线路选择里只有「源1」。查下来是两件事：
+    a) 上游列表只认 m3u —— parse() 遇到 TXT 直接返回 0 条，这些列表被判"失效上游"
+       丢掉。而榴芒电视.txt 里光央视就有 233 条。现在两种格式都认，原始条目
+       1221 → 2009 条，CCTV1 的候选 2 → 6 条。
+    b) 只有"测通了"的才写进线路，可境外 CI 一条都测不通中国移动的 CDN。
+       现在央视/卫视改成"候选池里除了确认是广告/定格的，全部写上"，最多 6 条；
+       地方台维持只写能播的（否则上千个台各挂 5 个死地址，列表几万行）。
+    c) 补齐上游：suxuang 的榴芒电视/移动IPTV、wwb521 的 tv.txt。
+    d) 全量重测 85 个主机，发现三个新大户 —— 192.151.150.154（51 台）、
+       198.204.228.26（44 台）、47.97.252.137:8088（29 台），连同 38.75.136.137、
+       63.141.230.178 一起写进 PREFER_HOSTS（已用隔 12 秒抓两次序列验证是真直播）。
+       结果：CCTV1~17 每台 6 条线路、全部可达，排在最前的是 198.204.228.26。
+    e) 之前"缺源的 CCTV4/5/6/4K"这次全部补齐：CCTV5 从 0 条可达变成 5 条。
+20. 只依赖本文件，不需要任何额外的配置文件。
 """
 
 import os
@@ -158,6 +172,13 @@ UPSTREAMS = [
     ("https://cdn.jsdelivr.net/gh/YueChan/Live@main/IPTV.m3u", 2),
     ("https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u", 3),
     ("https://cdn.jsdelivr.net/gh/vbskycn/iptv@master/tv/iptv4.m3u", 3),
+    # 同一个维护者的其他集合。实测这些文件和 ipv4.m3u 的重合度不高：加进来以后
+    # CCTV1 的候选 2 → 5 条、CCTV5 从 1 → 4 条、CCTV9 从 1 → 4 条。
+    # 用户要的"一个台多个源"卡在这里 —— 不是代码不给，是源本来就只有一两条。
+    # 不挂 jsdelivr 镜像：同一份内容拉两遍只是浪费时间，央视候选数一条也多不了。
+    ("https://raw.githubusercontent.com/suxuang/myIPTV/main/榴芒电视.txt", 1),
+    ("https://raw.githubusercontent.com/suxuang/myIPTV/main/移动IPTV.m3u", 1),
+    ("https://raw.githubusercontent.com/wwb521/live/main/tv.txt", 1),
     # 社区爬的，贴错标签比例高，只当最后手段
     ("https://iptv-org.github.io/iptv/countries/cn.m3u", 6),
 ]
@@ -168,6 +189,9 @@ MAX_WORKERS = 24
 # 央视名额最多：免费源里它们最容易被 rtp 组播 / 境外灰产源占坑，多留几条才有一条能播；
 # 卫视次之；其余给少一些，避免把测活时间全花在地方台上（CI 总共只有几十分钟）。
 CAND_CCTV, CAND_WS, CAND_OTHER = 12, 8, 3
+# 央视/卫视一个台最多写几条线路（写进 txt 的 `#` 队列）。上限 6 是因为实测候选池
+# 就这么大：CCTV1 全网也就 5~7 条互不相同的地址，再多是从同一批列表里重复抄的。
+MAX_LINES_MAIN = 6
 # 终审（抓两轮节目单）每条要等十几秒，所以只验最靠前的几条：
 # 央视/卫视验 5 条，其余 2 条
 CHECK_CCTV, CHECK_OTHER = 5, 2
@@ -221,9 +245,21 @@ BLOCK_HOSTS = (
 # → 加到这里。名单会过期（IP 会变、服务会停），过期了顶多是"优先了一条死的"，
 # 还有后面几档兜底，不会比现在更差。
 PREFER_HOSTS = (
-    # 央视主力
+    # 央视主力。2026-11-24 晚在用户的实际宽带下逐个实测：能连上、能取到节目单、
+    # 隔 12 秒再抓序列还在递进（不是广告循环）。按承载台数从多到少：
+    #   192.151.150.154    51 台   198.204.228.26    44 台
+    #   47.97.252.137:8088 29 台   74.91.26.218:82   18 台
+    #   120.76.248.139     13 台   38.75.136.137:98  10 台
+    #   63.141.230.178:82   9 台
+    # 这几个一加，CCTV1/2/3/5/7/9 每台的可达源从 1 条变成 4 条 —— 用户要的
+    # "一个台多个源"靠的就是它们，光靠一份"几条地址"的列表是凑不出来的。
+    "192.151.150.154",
+    "198.204.228.26",
+    "47.97.252.137",
     "74.91.26.218",
     "120.76.248.139",
+    "38.75.136.137",
+    "63.141.230.178",
     "124.165.251.82",
     "222.169.85.8",
     # 广电 / 运营商正规 CDN
@@ -372,6 +408,14 @@ def canon(name):
     if "卫视" in s:
         return re.sub(r"(电视台|频道)$", "", s)
 
+    # CGTN 各语言台：不同列表写法不同（西班牙语/西语、阿拉伯语/阿语），不归一会让
+    # 列表里并排出现两个台名，看着像重复台
+    if up.startswith("CGTN") or "中国国际电视台" in s:
+        for long_, short_ in (("西班牙", "西"), ("阿拉伯", "阿")):
+            if long_ in up:
+                return "CGTN" + short_ + "语"
+        return re.sub(r"(外国语|外语)纪录", "纪录", up if up.startswith("CGTN") else s)
+
     return s
 
 
@@ -460,28 +504,57 @@ def clean_url(u):
 
 
 def parse(text):
-    """解析 m3u，保留 tvg-id / tvg-logo，供后面做交叉校验和图标"""
+    """解析 m3u 或 TVBox 风格 TXT，统一成 [{name, tvg_id, logo, url}]
+
+    两种格式都要认，因为上游列表里一半是 TXT：
+        #EXTINF:-1 tvg-id="cctv1",CCTV1        ← m3u
+        http://a/cctv1.m3u8
+    和
+        央视频道,#genre#                        ← TVBox txt
+        CCTV1,http://a/cctv1.m3u8#http://b/...
+    早先只认 m3u，导致上游里的 TXT 列表解析出 0 条、被当成"失效上游"丢掉 ——
+    白白损失了上百条央视候选（CCTV1 的候选因此长期只有 2 条）。
+    """
     out = []
-    cur = None
+    if "#EXTINF" in text:
+        cur = None
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("#EXTINF"):
+                attrs = dict(ATTR_RE.findall(line))
+                tail = line.rsplit(",", 1)[-1].strip()
+                name = (attrs.get("tvg-name") or tail or "").strip()
+                cur = {
+                    "name": name,
+                    "tvg_id": (attrs.get("tvg-id") or "").strip(),
+                    "logo": (attrs.get("tvg-logo") or "").strip(),
+                }
+            elif line.startswith("#"):
+                continue
+            elif cur is not None:
+                cur["url"] = clean_url(line)
+                out.append(cur)
+                cur = None
+        return out
+
+    # TVBox 风格 TXT：每行 "频道名,地址"，一行里几条源用 # 连
     for raw in text.splitlines():
         line = raw.strip()
-        if not line:
+        if not line or "#genre#" in line or line.startswith("#"):
             continue
-        if line.startswith("#EXTINF"):
-            attrs = dict(ATTR_RE.findall(line))
-            tail = line.rsplit(",", 1)[-1].strip()
-            name = (attrs.get("tvg-name") or tail or "").strip()
-            cur = {
-                "name": name,
-                "tvg_id": (attrs.get("tvg-id") or "").strip(),
-                "logo": (attrs.get("tvg-logo") or "").strip(),
-            }
-        elif line.startswith("#"):
+        if "," not in line:
             continue
-        elif cur is not None:
-            cur["url"] = clean_url(line)
-            out.append(cur)
-            cur = None
+        name, urls = line.split(",", 1)
+        name = name.strip()
+        if not name:
+            continue
+        for u in urls.split("#"):
+            u = clean_url(u.strip())
+            if not u.lower().startswith(("http://", "https://")):
+                continue
+            out.append({"name": name, "tvg_id": "", "logo": "", "url": u})
     return out
 
 
@@ -977,8 +1050,37 @@ def main():
     out, empty, weak, unver, doubt = [], [], [], [], []
     multi = 0
     for ch, d in by_ch.items():
-        cands = [c for c in d["cands"] if c["state"] in ("live", "rawts", "unverified")]
+        # 央视/卫视：候选池里除了"确认是广告/定格"的，全部作为可选线路。
+        #
+        # 为什么连"这次测不通"的也要给：用户要的是"一个台多个源、自己切"。而实测
+        # 下来，他这条网络里央视台能连上的地址只有 1~2 条（都挤在同一个服务器上），
+        # 剩下 3~5 条候选全是连不上的。只放那 1 条 → 线路列表里永远只有「源1」，
+        # 服务器一抖这个台就彻底黑了；全放进去 → 至少还有 4 个备胎，某个时刻恢复了
+        # 用户切过去就能看。他自己判断"这条打不开"，比我们替他扔掉要好。
+        #
+        # 但排除两类：frozen（抓两次节目单序列都不动 = 广告/定格，放进去只有坏处）、
+        # 以及"既不可信又看不出台号"的地址（那是串台和卖药广告的主力）。
+        if is_main_ch(ch):
+            cands = [
+                c for c in d["cands"]
+                if c["state"] != "frozen"
+                and (c["state"] in ("live", "rawts", "unverified")
+                     or int(c.get("trust", 9)) <= TRUST_OK
+                     or c.get("ch_hint"))
+            ]
+            cands = cands[:MAX_LINES_MAIN]
+        else:
+            # 地方台上千个，只给确认能播的：否则一个台挂 5 个死地址，列表几万行。
+            cands = [c for c in d["cands"] if c["state"] in ("live", "rawts", "unverified")]
         cands.sort(key=score)
+        # 同一地址只留一次（不同上游会把同一条地址写两遍）
+        _seen, _uniq = set(), []
+        for c in cands:
+            if c["url"] in _seen:
+                continue
+            _seen.add(c["url"])
+            _uniq.append(c)
+        cands = _uniq
         if not cands:
             empty.append(ch)
             continue
@@ -994,11 +1096,9 @@ def main():
             if ch.startswith(("CCTV", "CGTN")) and not best.get("ch_hint"):
                 doubt.append((ch, best["url"]))
 
-        # 这个台有几条能用的源就放几条，不设上限 —— 会写成 TXT 的
+        # 候选池已经在上面的过滤器里筛过了，这里全部写出 —— 会写成 TXT 的
         # `CCTV1,地址1#地址2#地址3`，影视仓读成"一个台 + 3 条线路"，列表不会变长。
-        # 只丢掉档位垫底的（弱上游 + 连测都没测通）：那种地址既不知道是哪个台、
-        # 也不知道活没活，挂在 # 后面只会让线路列表里多几个点开没反应的东西。
-        picked = [c for c in cands if score(c)[0] < 9] or cands[:1]
+        picked = cands
         if len(picked) > 1:
             multi += 1
         out.append((ch, d["name"], d["logo"], picked))
