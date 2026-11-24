@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
+live.py —— 生成影视仓 / TVBox 用的直播源（live.txt 主输出 + live.m3u 兼容）
 
 本版修掉的问题（对应"点 CCTV3 出来是卖药广告、偶尔又正常"）：
 1. 旧版 rank() 判断的是"流地址里有没有 cctv 字样"，可那个字符串是流地址，
@@ -61,8 +61,9 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
     b) 一个台测完有几条能用的就放几条，**不设上限**。用户的原话是"只要搜到有源就
        加在台里面"。
     c) 显示名不加"线路2/3"：同一个台的几条源 tvg-id / tvg-name / 显示名三者完全
-       相同，影视仓会把它们并成一个台的多条播放源 —— 列表里只出现一个 CCTV1，
-       换源时才看到第 2、3 条。早先给每条加后缀，结果一个台占四行，又长又乱。
+       相同。★ 当时的推测是"影视仓会把它们并成一个台的多条播放源"，**这个推测被
+       实测推翻了**（见 18 条）—— 影视仓对 m3u 不做合并，同名的每条 #EXTINF 都算
+       一个独立频道，列表里就并排出现 2 CCTV2 / 3 CCTV2 / 4 CCTV3 / 5 CCTV3 …
     d) 候选名额相应加大（央视 12 / 卫视 8 / 地方 3），否则"有几条放几条"没料可放。
 16. 2026-11-24 三改：把"用户网络实测可达"固化进代码。
     起因：用户反馈"CCTV 大部分台看不了，只有 CCTV5+、CCTV9 少数几个能看，前两天
@@ -89,7 +90,18 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
        让最初的分析完全跑偏，一度得出"只有 9 个央视台有源"的错误结论。
     仍然缺源的台：CCTV4 / CCTV5 / CCTV6 / CCTV4K —— 当前网络下上游确实没有可达地址，
     这是源的问题，不是代码能解决的。
-17. 只依赖本文件，不需要任何额外的配置文件。
+18. 2026-11-24 四改：输出格式从 m3u 换成 TVBox 风格 TXT（用户截图反馈）。
+    用户要的是"列表里只显示 CCTV1 / CCTV2 / CCTV3，CCTV1 有多个源时在「线路选择」
+    里显示多个源供手动切换"。而 m3u 天生做不到这件事：
+    a) 实测证据：影视仓对同名 EXTINF 不合并，列表里出现 2 CCTV2 / 3 CCTV2 /
+       4~7 CCTV3 四个 / 9~10 CCTV5+ 两个 —— 一个台占好几行，又长又乱。
+    b) TXT 的 `CCTV1,地址1#地址2#地址3` 才是"一个台多条线路"的标准写法：影视仓
+       读成 1 个频道 + 3 条线路，列表一行，菜单里的「线路选择」就是 源1/源2/源3。
+    c) 主输出改为 live.txt；同时保留 live.m3u（每台只写第一条源），老直播地址
+       继续可用，不会因为换格式突然全黑。
+    d) 兜底：万一某个版本的影视仓不认 # 分隔，地址里 # 之后的部分按 URL 规范属于
+       fragment，不会被发给服务器 —— 最坏情况退回"只播第一条"，不会整台播不了。
+19. 只依赖本文件，不需要任何额外的配置文件。
 """
 
 import os
@@ -110,8 +122,21 @@ except Exception:
     pass
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT = os.path.join(ROOT, "live.m3u")
-BACKUP = os.path.join(ROOT, "live.m3u.bak")
+
+# 主输出：TVBox / 影视仓 风格 TXT。一个台只占一行，多条播放源用 # 连在同一个台名后面：
+#     CCTV1,http://a#http://b#http://c
+# 影视仓读出来就是"一个 CCTV1 + 3 条线路"：列表里只有一行台名，播放时按菜单键进
+# 「线路选择」能看到 源1 / 源2 / 源3，自己点着切。
+#
+# 为什么不用 m3u 干这件事：m3u 里同一个台写多条 #EXTINF，影视仓不会合并，而是当成
+# 多个频道并列显示 —— 用户实测的列表就变成了
+#     2 CCTV2 / 3 CCTV2 / 4 CCTV3 / 5 CCTV3 / 6 CCTV3 / 7 CCTV3 ...
+# 一个台占四行，又长又乱。TXT 的 `台名,地址1#地址2` 才是"一台多线"的标准写法。
+OUTPUT = os.path.join(ROOT, "live.txt")
+BACKUP = os.path.join(ROOT, "live.txt.bak")
+
+# 兼容输出：老的直播地址（…/live.m3u）继续可用，每台只写第一条源，带台标和分组。
+OUTPUT_M3U = os.path.join(ROOT, "live.m3u")
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -969,9 +994,11 @@ def main():
             if ch.startswith(("CCTV", "CGTN")) and not best.get("ch_hint"):
                 doubt.append((ch, best["url"]))
 
-        # 这个台有几条能用的源就放几条，不设上限。影视仓会把同名的多条合并成
-        # 一个台的多条播放源，列表里仍然只显示一个 CCTV1，需要时用换源键切。
-        picked = cands
+        # 这个台有几条能用的源就放几条，不设上限 —— 会写成 TXT 的
+        # `CCTV1,地址1#地址2#地址3`，影视仓读成"一个台 + 3 条线路"，列表不会变长。
+        # 只丢掉档位垫底的（弱上游 + 连测都没测通）：那种地址既不知道是哪个台、
+        # 也不知道活没活，挂在 # 后面只会让线路列表里多几个点开没反应的东西。
+        picked = [c for c in cands if score(c)[0] < 9] or cands[:1]
         if len(picked) > 1:
             multi += 1
         out.append((ch, d["name"], d["logo"], picked))
@@ -998,8 +1025,9 @@ def main():
         log("         这类地址最容易串台。点开发现是别的台，把上面地址的主机名写进")
         log("         BLOCK_HOSTS 即可永久拉黑（或直接告诉我，我加进去）。")
     if multi:
-        log(f"[多源] {multi} 个台带了 2 条以上播放源（同一个台名，影视仓会合并成一个台，")
-        log("       列表里不额外占行；播不出来时用换源键切到下一条）")
+        log(f"[多源] {multi} 个台带了 2 条以上播放源（写在同一行，用 # 连起来）：")
+        log("       列表里仍然只显示一个台名；播放时按菜单键进「线路选择」就是")
+        log("       源1 / 源2 / 源3，可以自己点着切，不用等它超时。")
 
     # 单入口脚本（同一 host+path，靠 ?id= 分发所有台）是串台高发结构：一个脚本按
     # 参数查表映射到不同频道，表里错一条就是"点 CCTV1 播 5+"。列出来便于逐个点验。
@@ -1029,39 +1057,58 @@ def main():
 
     if not final:
         if os.path.exists(OUTPUT):
-            log("[兜底] 本次 0 个可用频道，保留上次 live.m3u，不覆盖")
+            log(f"[兜底] 本次 0 个可用频道，保留上次 {os.path.basename(OUTPUT)}，不覆盖")
             log("       注意：这条路径说明本次一条都没验证成功（网络不通），旧文件里的台")
             log("       未必干净。请在能正常播放的宽带下跑一次 python scripts/live.py。")
         else:
             log("[致命] 无可用源且无历史文件")
         return 3
 
-    # 8) 排序 + 输出
-    final.sort(key=lambda x: (ch_order(x[0]), x[1]))
-    lines = ["#EXTM3U"]
-    one_line = 0
-    for ch, name, logo, picked in final:
-        if len(picked) == 1:
-            one_line += 1
-        for c in picked:
-            # 显示名一律用频道本名，不加"线路2/3"。同一个台的几条源写成完全相同的
-            # EXTINF（tvg-id / tvg-name / 显示名三者都一致），影视仓会把它们并成
-            # 一个台的多条播放源 —— 列表里只出现一个 CCTV1，换源时才看到 2/3/4。
-            # 早先给每条不同的后缀，结果列表里并列出现"CCTV1 / CCTV1 线路2"，
-            # 一个台占四行，又长又乱。
-            attrs = f'tvg-id="{ch}" tvg-name="{name}" group-title="{group_of(ch)}"'
-            if logo:
-                attrs += f' tvg-logo="{logo}"'
-            lines.append(f"#EXTINF:-1 {attrs},{name}")
-            lines.append(c["url"])
+    # 8) 排序 + 输出（两个文件一起写，内容来自同一份 final）
+    #
+    #   live.txt —— 主输出，TVBox / 影视仓 风格：
+    #       央视频道,#genre#
+    #       CCTV1,http://a#http://b#http://c
+    #       一个台一行。影视仓读成"一个台 + 3 条线路"，列表里只有一行 CCTV1，
+    #       播放时按菜单键进「线路选择」是 源1/源2/源3，自己点着切。
+    #
+    #   live.m3u —— 兼容老的直播地址，每台只写第一条源（带台标、分组）。
+    #       不写多条：m3u 里同名的多条 #EXTINF 影视仓不会合并，会当成多个频道
+    #       并列显示，列表就成了 2 CCTV2 / 3 CCTV2 / 4 CCTV3 / 5 CCTV3 ...
+    GROUP_ORDER = {"央视频道": 0, "卫视频道": 1, "地方台": 2}
+    final.sort(key=lambda x: (GROUP_ORDER.get(group_of(x[0]), 9), ch_order(x[0]), x[1]))
 
-    if os.path.exists(OUTPUT):
-        try:
-            os.replace(OUTPUT, BACKUP)
-        except Exception:
-            pass
-    with open(OUTPUT, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    txt, cur_g = [], None
+    for ch, name, logo, picked in final:
+        g = group_of(ch)
+        if g != cur_g:
+            if txt:
+                txt.append("")            # 分组之间空一行，肉眼看也清楚
+            txt.append(f"{g},#genre#")
+            cur_g = g
+        # dict.fromkeys 去重但保序：第一条永远是最该先试的那条
+        urls = list(dict.fromkeys(c["url"] for c in picked))
+        txt.append(f"{name},{'#'.join(urls)}")
+
+    m3u = ["#EXTM3U"]
+    for ch, name, logo, picked in final:
+        attrs = f'tvg-id="{ch}" tvg-name="{name}" group-title="{group_of(ch)}"'
+        if logo:
+            attrs += f' tvg-logo="{logo}"'
+        m3u.append(f"#EXTINF:-1 {attrs},{name}")
+        m3u.append(picked[0]["url"])
+
+    def _write(path, bak, lines):
+        if os.path.exists(path):
+            try:
+                os.replace(path, bak)
+            except Exception:
+                pass
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+    _write(OUTPUT, BACKUP, txt)
+    _write(OUTPUT_M3U, OUTPUT_M3U + ".bak", m3u)
 
     stats = {}
     for ch, _, _, _ in final:
@@ -1071,8 +1118,11 @@ def main():
     cctv_cnt = sum(1 for x in final if x[0].startswith(("CCTV", "CGTN")))
     if cctv_cnt == 0:
         log("[严重] 本次一个中央台都没生成 —— 上游列表大概率全部失效，请看上面 [上游失效] 那几行")
-    log(f"[完成] 频道 {len(final)} 个（央视 {cctv_cnt}）/ 线路 {len(lines) // 2} 条 / 单线路频道 {one_line} 个")
-    log(f"[输出] {OUTPUT}")
+    n_urls = sum(len(list(dict.fromkeys(c["url"] for c in p))) for _, _, _, p in final)
+    log(f"[完成] 频道 {len(final)} 个（央视 {cctv_cnt}）/ 播放源 {n_urls} 条 / "
+        f"其中 {multi} 个台有多条可选")
+    log(f"[输出] {OUTPUT}   ← 直播地址填这个（一个台一行）")
+    log(f"       {OUTPUT_M3U}   ← 兼容老地址，每台只留第一条源")
     return 0
 
 
