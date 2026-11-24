@@ -12,7 +12,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: write
     steps:
@@ -34,30 +34,29 @@ jobs:
       - name: update live
         continue-on-error: true
         env:
-          # 每个台给几条线路。播不出画面时影视仓会顺着列表往下走：一个台只有 1 条，
-          # 它就只能掉到下一个台（"点 CCTV1 播 CCTV5+" 就是这么来的）。给同一台连着
-          # 几条，失败后还在这台里打转，列表里也能自己点「CCTV1 线路2」。
-          LINES_CCTV: '4'
-          LINES_WS: '3'
-          LINES_OTHER: '1'
+          # 一个台有几条能用的源就放几条，写成 TXT 的 `CCTV1,地址1#地址2`，
+          # 影视仓读成"一个台 + 多条线路"，列表里仍然只有一行 CCTV1。
           MIN_COVERAGE: '0.5'
         run: python scripts/live.py
 
       - name: summary
         if: always()
         run: |
-          lines=$(grep -c '^#EXTINF' live.m3u 2>/dev/null || echo 0)
-          channels=$(grep -o 'tvg-id="[^"]*"' live.m3u 2>/dev/null | sort -u | wc -l)
-          cctv=$(grep -o 'tvg-id="CCTV[^"]*"' live.m3u 2>/dev/null | sort -u | wc -l)
-          wei=$(grep -o 'tvg-id="[^"]*卫视"' live.m3u 2>/dev/null | sort -u | wc -l)
+          read channels sources cctv wei <<< "$(awk -F',' '
+            /#genre#/ {next}
+            NF>1 {ch++; n+=split($2,a,"#"); if ($1 ~ /^CCTV/) c++; if ($1 ~ /卫视/) w++}
+            END {print ch+0, n+0, c+0, w+0}' live.txt 2>/dev/null)"
           echo "### 本次生成结果" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| 项目 | 数量 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 频道数 | $channels |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 线路总数 | $lines |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 央视频道 | $cctv |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 卫视频道 | $wei |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 频道数（列表行数） | ${channels:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 播放源总数（线路） | ${sources:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 央视频道 | ${cctv:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 卫视频道 | ${wei:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "直播地址填 live.txt：一个台一行，多条源用 # 连在台名后面，" >> "$GITHUB_STEP_SUMMARY"
+          echo "播放时按菜单键 →「线路选择」即可手动切 源1/源2/源3。" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "央视数为 0 → 看上一次日志的 [上游检查] 那几行，把失效地址发出来换源。" >> "$GITHUB_STEP_SUMMARY"
 
@@ -65,7 +64,10 @@ jobs:
         run: |
           git config user.name "bot"
           git config user.email "bot@bot.com"
-          git add ysc.json live.m3u
+          # 直播那步失败时可能一个产物都没有，逐个判断，缺的不加也不报错
+          for f in ysc.json live.txt live.m3u; do
+            [ -f "$f" ] && git add "$f"
+          done
           if git diff --cached --quiet; then
             echo "no change"
             exit 0
