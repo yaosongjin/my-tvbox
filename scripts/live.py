@@ -32,7 +32,18 @@ live.py —— 生成影视仓 / TVBox 用的直播源 live.m3u
    播不了 —— 这是央视整组缺失的第二个原因（第一个是上游 404）。
 10. 纯英文名的境外小台（HarbinComprehensiveNewsChannel 之类）直接丢弃，把测活
    名额留给央视和卫视。
-11. 只依赖本文件，不需要任何额外的配置文件。
+12. 修掉"点 CCTV1 播出 CCTV5+"（这是 2026-11 用户报的最后一个问题）：
+    a) 台号校验原来只扫 URL 的 path，对 `migu.php?id=cctv5p` 这种把台号写在 query
+       里的地址等于完全没校验。现在扫整条地址，并支持 5+/5p/plus。
+    b) 台号冲突不再"全丢"：`id=cctv5p` 被同时标成 CCTV1 和 CCTV5+ 时，让地址自己
+       作证，归给台号对得上的那个，避免把 CCTV5+ 唯一正确的源一起误杀。
+    c) 排序按"自证等级"分档：路径自证（/cctv1/、/tsfile/live/0001_1）> 仅 query
+       自证（live.php?id=CCTV1）> 看不出来。单入口脚本一台分发九个台是串台高发
+       结构，自然被压到后面。
+    d) 日志会列出 [存疑]（央视却没有台号线索）和 [批量源]（一个入口分发多个台），
+       这两类点开最容易发现串台。
+13. BLOCK_HOSTS：已知串台的主机写进这个常量即可永久拉黑，不用等上游修。
+14. 只依赖本文件，不需要任何额外的配置文件。
 """
 
 import os
@@ -40,7 +51,7 @@ import re
 import sys
 import time
 from email.utils import parsedate_to_datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin
 
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -97,6 +108,10 @@ TRUST_OK = 3               # 可信度 <= 3 的上游：这次测不通也保留
 WEAK_TRUST = 6             # >= 这个可信度算"弱源"，只在前两级都拿不到时才用
 # 通过校验的频道占比低于这个值只报警、不中止（写出去的都是验证过的，安全）
 MIN_COVERAGE = float(os.environ.get("MIN_COVERAGE", "0.5"))
+# 已知会"串台"的主机：地址写的是这个台、播出来是另一个台。填域名（前缀匹配），
+# 例如 BLOCK_HOSTS = ("p.ytelc.com", "tvbox6.icu")。日志里 [存疑] 那几行会直接
+# 打印可疑地址，把它的主机名填进来即可永久拉黑，不用等上游修。
+BLOCK_HOSTS = ()
 
 ATTR_RE = re.compile(r'([\w-]+)="([^"]*)"')
 _BRACKET = re.compile(r"[\[【(（][^\]】)）]*[\]】)）]")
@@ -107,6 +122,49 @@ _QUALITY = re.compile(
     re.I,
 )
 _CCTV_NUM = re.compile(r"cctv[\-_ ]?(\d{1,2})", re.I)
+# 扫整条地址（含 query）里的 CCTV 台号。之前只扫 path，对
+# `http://xxx/tv/migu.php?id=cctv5p` 这种把台号放在 query 里的地址等于没校验，
+# 于是"标着 CCTV1、实际是 5+"的源被原样放行 —— 点 CCTV1 播出 5+ 就是这条路径。
+_CCTV_TOK = re.compile(r"cctv[\-_ ]?(?:plus)?(\d{1,2})(?![0-9])", re.I)
+# 运营商常见的 tsfile 编号：/tsfile/live/0003_1.m3u8 → 3
+_TS_NUM = re.compile(r"(?:live|tsfile)[/_]0*(\d{1,2})_\d", re.I)
+
+
+def url_ch_nums(url):
+    """地址里所有能自证的 CCTV 台号（主号，5+ 与 5 都算 5）。"""
+    u = unquote(url or "")
+    return {int(m.group(1)) for m in _CCTV_TOK.finditer(u)}
+
+
+def url_ch_hint(url, want):
+    """这个地址有多能「自己证明」是第 want 台。分三档：
+
+    2 = 路径里就写着这个台（/cctv1/、/tsfile/live/0001_1.m3u8）—— 每个台独立路径，
+        串台概率最低；
+    1 = 只有 query 里带台号（live.php?id=CCTV1）—— 一个脚本分发多个台，映射表错
+        一条就是"点 CCTV1 播 5+"，可靠性差一档；
+    0 = 完全看不出来。
+    """
+    u = unquote(url or "")
+    path = u.split("?", 1)[0]
+    if re.search(r"cctv[\-_ ]?(?:plus)?%d(?![0-9])" % want, path, re.I):
+        return 2
+    m = _TS_NUM.search(path)
+    if m and int(m.group(1)) == want:
+        return 2
+    if re.search(r"cctv[\-_ ]?(?:plus)?%d(?![0-9])" % want, u, re.I):
+        return 1
+    return 0
+
+
+def host_of(url):
+    m = re.match(r"^https?://([^/?#]+)", url or "", re.I)
+    return m.group(1).lower() if m else ""
+
+
+def is_blocked(url):
+    h = host_of(url)
+    return bool(h) and any(h == b or h.endswith("." + b) or b in h for b in BLOCK_HOSTS)
 
 _CN2CCTV = [
     ("体育赛事", "5+"),
@@ -422,6 +480,12 @@ def score(entry):
     s = base + trust * 2
     if not entry["url"].lower().startswith("https"):
         s += 1
+    # 台号能自证（地址里就写着 cctv1 / 0001）的往前挪：这是"点 CCTV1 播出 5+"唯一
+    # 可编程的判据。分两档：路径自证 -8 > 仅 query 自证 -4 > 看不出来 0。
+    # 幅度都不会让"未验证"(20) 顶到"已验证"(0) 前面，只是把不可靠的结构往后压。
+    lvl = int(entry.get("ch_hint") or 0)
+    if lvl:
+        s -= 4 * lvl
     return s
 
 
@@ -600,34 +664,78 @@ def main():
     if n0 != len(entries):
         log(f"[协议] 丢弃 {n0 - len(entries)} 条非 http 地址（rtp/udp 组播，影视仓播不了）")
 
+    if BLOCK_HOSTS:
+        n1 = len(entries)
+        entries = [e for e in entries if not is_blocked(e["url"])]
+        if n1 != len(entries):
+            log(f"[拉黑] 丢弃 {n1 - len(entries)} 条来自 BLOCK_HOSTS 的地址")
+
     before = len(entries)
     entries = [e for e in entries if valid_ch(e["ch"])]
     if before != len(entries):
         log(f"[垃圾条目] 丢弃 {before - len(entries)} 条假台名 / 年份目录 / 测试条目")
     log(f"[归一化后] 共 {len(entries)} 条")
 
-    # 2) 交叉校验：同一地址被不同上游标成不同频道 → 贴错标签，丢弃
-    labels = {}
+    # 2) 交叉校验：同一地址被不同上游标成不同频道 → 至少有一个是错的。
+    #    但不能一刀切全丢：`migu.php?id=cctv5p` 被同时标成 CCTV1 和 CCTV5+ 时，
+    #    全丢会把 CCTV5+ 唯一正确的源也删掉。所以先让地址自己作证（地址里的台号）：
+    #    能和台号对上且只有一个认领者 → 归它；对不上或多人认领 → 整条丢弃。
+    by_url = {}
     for e in entries:
-        labels.setdefault(e["url"], set()).add(e["ch"])
-    conflict = {u for u, s in labels.items() if len(s) > 1}
+        by_url.setdefault(e["url"], []).append(e)
+    conflict = {u for u, lst in by_url.items() if len({e["ch"] for e in lst}) > 1}
     if conflict:
-        log(f"[标签冲突] 丢弃 {len(conflict)} 个被贴上多个台名的地址")
-    entries = [e for e in entries if e["url"] not in conflict]
+        winner, dropped = {}, 0
+        for u in conflict:
+            nums = url_ch_nums(u)
+            match = []
+            for e in by_url[u]:
+                m = re.match(r"^CCTV(\d{1,2})", e["ch"])
+                if nums and m and int(m.group(1)) in nums:
+                    match.append(e["ch"])
+            if len(set(match)) == 1:
+                winner[u] = match[0]
+        kept = []
+        for e in entries:
+            u = e["url"]
+            if u in conflict:
+                if winner.get(u) != e["ch"]:
+                    dropped += 1
+                    continue
+            kept.append(e)
+        entries = kept
+        log(f"[标签冲突] {len(conflict)} 个地址被贴上多个台名："
+            f"{len(winner)} 个按地址内台号归位，丢弃 {dropped} 条错标")
 
-    # 3) 地址里的台号与标签不符 → 丢弃（服务器把 cctv5 的文件改标成 cctv3 是常见套路）
+    # 3) 地址里的台号与标签不符 → 丢弃。这是"点 CCTV1 播出 CCTV5+"的直接防线：
+    #    台号可能写在 path（/cctv1/index.m3u8、/tsfile/live/0001_1.m3u8），
+    #    也可能写在 query（migu.php?id=cctv5p）。只扫 path 会漏掉后者。
     drop = 0
     kept = []
+    samples = []
     for e in entries:
         m_ch = re.match(r"^CCTV(\d{1,2})", e["ch"])
-        m_url = _CCTV_NUM.search(urlparse(e["url"]).path or "")
-        if m_ch and m_url and m_ch.group(1) != m_url.group(1):
-            drop += 1
+        if not m_ch:
+            kept.append(e)
             continue
+        want = int(m_ch.group(1))
+        got = url_ch_nums(e["url"])
+        if got and want not in got:
+            drop += 1
+            if len(samples) < 3:
+                samples.append(f"{e['ch']} ← {e['url'][:70]}")
+            continue
+        # 台号能自证（地址里就写着这个台）→ 排序时优先，避免被一条看不出台号的地址占坑
+        lvl = url_ch_hint(e["url"], want)
+        if not lvl and want in got:
+            lvl = 1
+        e["ch_hint"] = lvl
         kept.append(e)
     entries = kept
     if drop:
         log(f"[台号不符] 丢弃 {drop} 个地址内台号与名称不一致的源")
+        for s in samples:
+            log(f"    {s}")
 
     # 4) 按频道聚合并裁剪候选。候选数分级：央视给最多名额，因为免费源里它们
     #    最容易被 rtp 组播和境外灰产源占坑，得多试几条才有一条真的
@@ -695,7 +803,7 @@ def main():
     #    ② 可信上游 + 这次测不到（CI 在境外，家里大概率能播）
     #    ③ 弱上游 + 已验证     ← 只在前两级都没有时才用，日志点名
     #    弱上游 + 测不到 → 直接扔（既不准又不知道活没活）
-    out, empty, weak, unver = [], [], [], []
+    out, empty, weak, unver, doubt = [], [], [], [], []
     for ch, d in by_ch.items():
         cands = [c for c in d["cands"] if c["state"] in ("live", "rawts", "unverified")]
         cands.sort(key=score)
@@ -708,6 +816,11 @@ def main():
             weak.append(ch)
         if best["state"] == "unverified":
             unver.append(ch)
+            # 「未验证」意味着这条源连内容都没被确认过，唯一的质量信号就是地址里
+            # 有没有写明台号。CCTV 却完全看不出台号的地址，正是"点 CCTV1 播 5+"
+            # 最容易发生的一类，单独吵出来，方便直接拉黑它的主机。
+            if ch.startswith(("CCTV", "CGTN")) and not best.get("ch_hint"):
+                doubt.append((ch, best["url"]))
         out.append((ch, d["name"], d["logo"], [best][:PER_CH_LINES]))
 
     final = out
@@ -720,6 +833,25 @@ def main():
         log(f"[未验证] {len(unver)} 个台的地址这次没测通，取自可信列表（家里通常能播）："
             + ", ".join(sorted(unver)[:24]) + (" ..." if len(unver) > 24 else ""))
         log("         点开没反应 = 这条真死了，不会跳到别的台；告诉我台名我换源。")
+    if doubt:
+        log(f"[存疑] {len(doubt)} 个央视台没有能自证台号的源（地址里看不出是哪一台）：")
+        for ch, u in doubt[:8]:
+            log(f"    {ch}  {u[:78]}")
+        log("         这类地址最容易串台。点开发现是别的台，把上面地址的主机名写进")
+        log("         BLOCK_HOSTS 即可永久拉黑（或直接告诉我，我加进去）。")
+
+    # 单入口脚本（同一 host+path，靠 ?id= 分发所有台）是串台高发结构：一个脚本按
+    # 参数查表映射到不同频道，表里错一条就是"点 CCTV1 播 5+"。列出来便于逐个点验。
+    grp = {}
+    for ch, _n, _l, picked in final:
+        k = picked[0]["url"].split("?")[0]
+        grp.setdefault(k, set()).add(ch)
+    hot = {k: v for k, v in grp.items() if len(v) >= 3}
+    if hot:
+        log(f"[批量源] {len(hot)} 个入口一个地址分发多个台（串台高发，建议点验）：")
+        for k, v in sorted(hot.items(), key=lambda kv: -len(kv[1]))[:5]:
+            log(f"    {k[:64]} → {len(v)} 个台：{', '.join(sorted(v)[:8])}")
+        log("         点开发现串台，就把这个主机写进 BLOCK_HOSTS。")
 
     # 写出去的每一条都是"确认在直播"的，所以成片率低只报警、不中止：
     # 少几个台，总比多几个广告台好。成片率 0 才说明这次网络完全不通，保留旧文件。
