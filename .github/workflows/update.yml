@@ -12,7 +12,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # 上游从 9 个加到 12 个、候选从 ~1000 条涨到 ~2000 条，测活时间翻倍，
+    # 40 分钟不够用（被打断会留下没写完的产物）。给到 55 分钟。
+    timeout-minutes: 55
     permissions:
       contents: write
     steps:
@@ -34,8 +36,9 @@ jobs:
       - name: update live
         continue-on-error: true
         env:
-          # 一个台有几条能用的源就放几条，写成 TXT 的 `CCTV1,地址1#地址2`，
-          # 影视仓读成"一个台 + 多条线路"，列表里仍然只有一行 CCTV1。
+          # 央视/卫视每个台最多写 6 条线路（写成 TXT 的 `CCTV1,地址1#地址2#...`），
+          # 影视仓读成"一个台 + 多条线路"，列表里仍然只有一行 CCTV1，按菜单键
+          # 进「线路选择」就是 源1/源2/源3… 地方台只写能播的那一条。
           MIN_COVERAGE: '0.5'
         run: python scripts/live.py
 
