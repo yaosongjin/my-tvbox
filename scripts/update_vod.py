@@ -119,34 +119,47 @@ def main():
         log("[致命] sources.json 里 candidates 应是数组")
         return
 
-    # 同一 api 只留一条
+    # 去重按 (api, 站名)，不是只看 api。
+    #
+    # 为什么：影视仓里"首页左上角的标题"和"搜索页的站点名"是同一个东西 —— 都取
+    # site 的 name。用户 2026-11-25 要"首页显示小肥羊的点播台、搜索页显示芒果资源"，
+    # 一个 name 做不到，只能让同一个 api 挂两个站名：排在前面那个（searchable=0）
+    # 当首页数据源，后面那个（searchable=1）进搜索页。
     uniq, seen = [], set()
     for c in cands:
         if not isinstance(c, dict) or not c.get("api"):
             continue
-        if c["api"] in seen:
+        sig = (c["api"], c.get("name") or "")
+        if sig in seen:
             continue
-        seen.add(c["api"])
+        seen.add(sig)
         uniq.append(c)
     cands = uniq
-    log(f"[候选] {len(cands)} 个源")
+    log(f"[候选] {len(cands)} 个站名 / {len({c['api'] for c in cands})} 个 api")
 
-    def run(c):
+    # 同一个 api 只探一次（它可能挂了多个站名），结果按 api 复用
+    apis = list(dict.fromkeys(c["api"] for c in cands))
+
+    def probe(api):
         try:
-            return c, alive(c["api"])
+            return api, alive(api)
         except Exception as e:
-            log(f"  探测异常 {c['api']}: {e}")
-            return c, (False, None)
+            log(f"  探测异常 {api}: {e}")
+            return api, (False, None)
 
     with cf.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        results = list(ex.map(run, cands))
+        ok_map = dict(ex.map(probe, apis))
 
     sites = []
-    for c, (ok, probe) in results:
+    for c in cands:
+        ok, probe_url = ok_map.get(c["api"], (False, None))
         if ok:
+            name = c.get("name") or c["api"]
             sites.append({
-                "key": c.get("key") or make_key(c["api"]),
-                "name": c.get("name") or c["api"],
+                # key 带上站名：同一 api 的两个站名必须是两个不同的 key，
+                # 否则后一个会把前一个覆盖掉
+                "key": c.get("key") or make_key(c["api"] + "|" + name),
+                "name": name,
                 "type": 1,
                 "api": c["api"],
                 # searchable=0：这个站只做首页数据源，不参与聚合搜索。
@@ -156,9 +169,9 @@ def main():
                 "searchable": int(c.get("searchable", 1)),
                 "filterable": int(c.get("filterable", 1)),
             })
-            log(f"OK   {c['name']}  ({probe})")
+            log(f"OK   {name}  ({probe_url})")
         else:
-            log(f"DEAD {c['name']}  {c['api']}")
+            log(f"DEAD {c.get('name')}  {c['api']}")
 
     try:
         with open(OUT, encoding="utf-8") as f:
