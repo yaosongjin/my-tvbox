@@ -149,8 +149,12 @@ def main():
                 "name": c.get("name") or c["api"],
                 "type": 1,
                 "api": c["api"],
-                "searchable": 1,
-                "filterable": 1,
+                # searchable=0：这个站只做首页数据源，不参与聚合搜索。
+                # 用户 2026-11-25 要求"首页左上角仍显示小肥羊的点播台，但搜索页
+                # 别出现它" —— 就是这个开关。不影响点开、不影响播放，只让它在
+                # 搜索页的站点列表里消失。
+                "searchable": int(c.get("searchable", 1)),
+                "filterable": int(c.get("filterable", 1)),
             })
             log(f"OK   {c['name']}  ({probe})")
         else:
