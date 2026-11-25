@@ -5,7 +5,7 @@
   "sites": [
     {
       "key": "sbe0af2",
-      "name": "小肥羊的点播台",
+      "name": "芒果资源",
       "type": 1,
       "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
       "searchable": 0,
