@@ -45,21 +45,24 @@ jobs:
       - name: summary
         if: always()
         run: |
-          read channels sources cctv wei <<< "$(awk -F',' '
-            /#genre#/ {next}
-            NF>1 {ch++; n+=split($2,a,"#"); if ($1 ~ /^CCTV/) c++; if ($1 ~ /卫视/) w++}
-            END {print ch+0, n+0, c+0, w+0}' live.txt 2>/dev/null)"
+          # live.txt 现在是"一个源一行、台名重复"，所以频道数要按台名去重。
+          channels=$(awk -F',' '/#genre#/{next} NF>1 && !s[$1]++ {c++} END{print c+0}' live.txt 2>/dev/null)
+          sources=$(awk -F',' '/#genre#/{next} NF>1 {n++} END{print n+0}' live.txt 2>/dev/null)
+          cctv=$(awk -F',' '/#genre#/{next} NF>1 && $1 ~ /^CCTV/ && !s[$1]++ {c++} END{print c+0}' live.txt 2>/dev/null)
+          wei=$(awk -F',' '/#genre#/{next} NF>1 && $1 ~ /卫视/ && !s[$1]++ {c++} END{print c+0}' live.txt 2>/dev/null)
+          multi=$(awk -F',' '/#genre#/{next} NF>1 {if (++m[$1]==2) k++} END{print k+0}' live.txt 2>/dev/null)
           echo "### 本次生成结果" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| 项目 | 数量 |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 频道数（列表行数） | ${channels:-0} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 播放源总数（线路） | ${sources:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 频道数（按台名去重） | ${channels:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 播放源总数 | ${sources:-0} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 其中多个源的台 | ${multi:-0} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 央视频道 | ${cctv:-0} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 卫视频道 | ${wei:-0} |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "直播地址填 live.txt：一个台一行，多条源用 # 连在台名后面，" >> "$GITHUB_STEP_SUMMARY"
-          echo "播放时按菜单键 →「线路选择」即可手动切 源1/源2/源3。" >> "$GITHUB_STEP_SUMMARY"
+          echo "直播地址填 live.txt：同一个台名写多行、每行一个地址，" >> "$GITHUB_STEP_SUMMARY"
+          echo "影视仓会合并成一个台，按菜单键 →「线路选择」就是 源1/源2/源3。" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "央视数为 0 → 看上一次日志的 [上游检查] 那几行，把失效地址发出来换源。" >> "$GITHUB_STEP_SUMMARY"
 
