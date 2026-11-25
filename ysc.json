@@ -36,10 +36,10 @@
       "filterable": 1
     },
     {
-      "key": "see3e9f",
-      "name": "最大资源",
+      "key": "s1e40a5",
+      "name": "金鹰点播",
       "type": 1,
-      "api": "https://api.zuidapi.com/api.php/provide/vod/",
+      "api": "https://jinyingzy.com/api.php/provide/vod/",
       "searchable": 1,
       "filterable": 1
     },
