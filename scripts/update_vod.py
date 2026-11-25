@@ -9,6 +9,9 @@ update_vod.py —— 生成影视仓的 ysc.json（只负责点播仓，直播�
 4. 写入前先写临时文件再替换，避免中途失败留下半个 ysc.json。
 5. 把直播源地址注入 lives，让影视仓自动带出直播列表。此处指向 live.txt（不是
    live.m3u）—— 影视仓的「直播地址」只读，只能靠这个字段换，"一个台多条源"全靠它。
+6. 探不通的站当天就不写进配置，通了下次自动回来（用户 2026-11-25："不通的时候就不该
+   显示，通了再显示就行"）。探测用 (5,10) 超时 + 每个入口重试一次，避免网络抖动
+   把活站误判成死站；但判定标准仍然是"真返回了非空片单"才算通，不会放死站进来。
 """
 
 import concurrent.futures as cf
@@ -23,10 +26,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "config", "sources.json")
 OUT = os.path.join(ROOT, "ysc.json")
 
-TIMEOUT = (3, 5)
+# 探测超时 (连接, 读取)。原来是 (3, 5)，跨境访问国内采集站，3 秒建连太紧了，
+# 网络稍微抖一下就把能用的站判死。放宽到 (5, 10)。
+TIMEOUT = (5, 10)
 DEEP_CHECK = False
 MAX_WORKERS = 8
-PROBE_BUDGET = 12
+# 单站总预算（秒）。8 个站并发跑，30 秒足够，超了就先当作不通。
+PROBE_BUDGET = 30
+# 同一个入口失败后重试几次。设为 0 就是"一次不通就判死"。
+RETRY = 1
 
 # 想让影视仓打开就自带直播列表，就把你的 raw 地址填进来。
 #
@@ -71,35 +79,43 @@ def _has_list(d):
 
 
 def alive(api):
+    """探活：三个入口逐个试，每个入口失败后再试一次。
+
+    判定标准没变（HTTP 200 + code 正常 + list 非空），只是把"一次不通就判死"
+    改成"两次都不通才判死"。跨境访问国内采集站，单次超时、DNS 抖动很常见，
+    不重试会凭空少掉几个本来能用的站。真挂了的站重试也一样失败，
+    所以不会把死站混进来 —— 通不了就不写进配置，这是硬规则。
+    """
     base = api if api.endswith("/") else api + "/"
     probes = [base + "?ac=list", base + "?ac=videolist", base + "?ac=detail"]
     budget_end = time.time() + PROBE_BUDGET
     for p in probes:
-        if time.time() > budget_end:
-            log(f"  budget exceeded {api}")
-            break
-        try:
-            r = requests.get(p, timeout=TIMEOUT, headers=HEADERS)
-            if r.status_code != 200:
-                continue
-            d = r.json()
-            if not (_ok_code(d) and _has_list(d)):
-                continue
-            if DEEP_CHECK:
-                item = d["list"][0]
-                vid = item.get("vod_id") if isinstance(item, dict) else None
-                if vid:
-                    try:
-                        r2 = requests.get(f"{base}?ac=detail&ids={vid}",
-                                          timeout=TIMEOUT, headers=HEADERS)
-                        d2 = r2.json()
-                        if not (_ok_code(d2) and _has_list(d2)):
-                            continue
-                    except Exception:
-                        continue
-            return True, p
-        except Exception as e:
-            log(f"  probe fail {p}: {e}")
+        for attempt in range(RETRY + 1):
+            if time.time() > budget_end:
+                log(f"  budget exceeded {api}")
+                return False, None
+            try:
+                r = requests.get(p, timeout=TIMEOUT, headers=HEADERS)
+                if r.status_code != 200:
+                    break          # 状态码不对，说明这个入口不通，换下一个
+                d = r.json()
+                if not (_ok_code(d) and _has_list(d)):
+                    break          # 返回体不对，同样换入口
+                if DEEP_CHECK:
+                    item = d["list"][0]
+                    vid = item.get("vod_id") if isinstance(item, dict) else None
+                    if vid:
+                        try:
+                            r2 = requests.get(f"{base}?ac=detail&ids={vid}",
+                                              timeout=TIMEOUT, headers=HEADERS)
+                            d2 = r2.json()
+                            if not (_ok_code(d2) and _has_list(d2)):
+                                break
+                        except Exception:
+                            break
+                return True, p
+            except Exception as e:
+                log(f"  probe fail {p} (第{attempt + 1}次): {e}")
     return False, None
 
 
@@ -153,25 +169,29 @@ def main():
     sites = []
     for c in cands:
         ok, probe_url = ok_map.get(c["api"], (False, None))
-        if ok:
-            name = c.get("name") or c["api"]
-            sites.append({
-                # key 带上站名：同一 api 的两个站名必须是两个不同的 key，
-                # 否则后一个会把前一个覆盖掉
-                "key": c.get("key") or make_key(c["api"] + "|" + name),
-                "name": name,
-                "type": 1,
-                "api": c["api"],
-                # searchable=0：这个站只做首页数据源，不参与聚合搜索。
-                # 用户 2026-11-25 要求"首页左上角仍显示小肥羊的点播台，但搜索页
-                # 别出现它" —— 就是这个开关。不影响点开、不影响播放，只让它在
-                # 搜索页的站点列表里消失。
-                "searchable": int(c.get("searchable", 1)),
-                "filterable": int(c.get("filterable", 1)),
-            })
-            log(f"OK   {name}  ({probe_url})")
-        else:
+        # 通不了就不写进配置（用户 2026-11-25 明确）：
+        #   "不通的时候就不该显示，通了再显示就行"
+        # 所以这里没有 keep 之类的豁免 —— 探不通的站当天就从搜索页消失，
+        # 下次探通了自然回来。代价是搜索页的站数会随网络状况小幅波动，这是要的效果。
+        if not ok:
             log(f"DEAD {c.get('name')}  {c['api']}")
+            continue
+        name = c.get("name") or c["api"]
+        # key 带上站名：同一 api 的两个站名必须是两个不同的 key，
+        # 否则后一个会把前一个覆盖掉
+        sites.append({
+            "key": c.get("key") or make_key(c["api"] + "|" + name),
+            "name": name,
+            "type": 1,
+            "api": c["api"],
+            # searchable=0：这个站只做首页数据源，不参与聚合搜索。
+            # 用户 2026-11-25 要求"首页左上角仍显示小肥羊的点播台，但搜索页
+            # 别出现它" —— 就是这个开关。不影响点开、不影响播放，只让它在
+            # 搜索页的站点列表里消失。
+            "searchable": int(c.get("searchable", 1)),
+            "filterable": int(c.get("filterable", 1)),
+        })
+        log(f"OK   {name}  ({probe_url})")
 
     try:
         with open(OUT, encoding="utf-8") as f:
