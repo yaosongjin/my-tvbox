@@ -93,6 +93,8 @@ http://23.237.104.106:8080/USA_5STARMAX/tracks-v1a1/mono.m3u8
 https://cdn.qd.je/163189.php?id=ylxw
 #EXTINF:-1 tvg-id="TVB星河" tvg-name="TVB星河" group-title="地方台",TVB星河
 https://cdn.qd.je/163189.php?id=tvbxh
+#EXTINF:-1 tvg-id="七台河新闻综合" tvg-name="七台河新闻综合" group-title="地方台" tvg-logo="https://live.fanmingming.cn/tv/七台河新闻综合.png",七台河新闻综合
+http://live.qthnews.org.cn:1935/live/live1/800k/tzwj_video.m3u8
 #EXTINF:-1 tvg-id="万荣综合" tvg-name="万荣综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/万荣综合.png",万荣综合
 http://60.222.246.220:19433/hls1.m3u8
 #EXTINF:-1 tvg-id="上虞文化影院" tvg-name="上虞文化影院" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/上虞文化影院.png",上虞文化影院
@@ -165,8 +167,6 @@ http://stream.hrbtv.net/yspd/sd/live.m3u8?zheild
 http://stream.hrbtv.net/xwzh/sd/live.m3u8?zheild
 #EXTINF:-1 tvg-id="哈尔滨生活" tvg-name="哈尔滨生活" group-title="地方台" tvg-logo="https://live.fanmingming.cn/tv/哈尔滨生活.png",哈尔滨生活
 http://stream.hrbtv.net/shpd/sd/live.m3u8?zheild
-#EXTINF:-1 tvg-id="哈尔滨资讯" tvg-name="哈尔滨资讯" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/哈尔滨资讯.png",哈尔滨资讯
-http://stream.hrbtv.net/zxpd/sd/live.m3u8
 #EXTINF:-1 tvg-id="哈尔滨都市咨询" tvg-name="哈尔滨都市咨询" group-title="地方台" tvg-logo="https://live.fanmingming.cn/tv/哈尔滨都市咨询.png",哈尔滨都市咨询
 http://stream.hrbtv.net/zxpd/sd/live.m3u8?zheild
 #EXTINF:-1 tvg-id="嘉兴新闻综合" tvg-name="嘉兴新闻综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/嘉兴新闻综合.png",嘉兴新闻综合
@@ -197,6 +197,8 @@ http://l.cztvcloud.com/channels/lantian/SXshengzhou1/720p.m3u8?zzhed#http://l.cz
 https://jwcdnqx.hebyun.com.cn/live/pqzh/1500k/tzwj_video.m3u8
 #EXTINF:-1 tvg-id="平湖新闻综合" tvg-name="平湖新闻综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/平湖新闻综合.png",平湖新闻综合
 http://l.cztvcloud.com/channels/lantian/SXpinghu1/720p.m3u8?zzhed
+#EXTINF:-1 tvg-id="平遥新闻综合" tvg-name="平遥新闻综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/平遥新闻综合.png",平遥新闻综合
+https://tntgjhjb.live.sxmty.com/live/hls/3a4585ac11ec4e1bb07b419101b370c3/baf63e2b313440c2a25d7859f9b73b05-1.m3u8?zshanxd
 #EXTINF:-1 tvg-id="广安公共" tvg-name="广安公共" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/广安公共.png",广安公共
 http://live1.gatv.com.cn:85/live/GGPD_ggpdzm.m3u8?zsicd
 #EXTINF:-1 tvg-id="广州新闻" tvg-name="广州新闻" group-title="地方台" tvg-logo="https://live.fanmingming.cn/tv/广州新闻.png",广州新闻
@@ -209,12 +211,8 @@ https://live.gdtv.ah.cn/live/newsTV.m3u8
 https://hlscdn.liangtv.cn/live/0234c48e0bc24fe1b41b9999a253e581/1075ee38e04f490690f6a36a16e09c79.m3u8
 #EXTINF:-1 tvg-id="延边2" tvg-name="延边2" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/延边2.png",延边2
 http://stream5.jlntv.cn/wq/playlist.m3u8
-#EXTINF:-1 tvg-id="张掖新闻综合" tvg-name="张掖新闻综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/张掖新闻综合.png",张掖新闻综合
-https://play.kankanlive.com/live/1720583434627241.m3u8
 #EXTINF:-1 tvg-id="德惠综合" tvg-name="德惠综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/德惠综合.png",德惠综合
 http://stream11.jlntv.cn/dehuitv/sd/live.m3u8
-#EXTINF:-1 tvg-id="怀仁综合" tvg-name="怀仁综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/怀仁综合.png",怀仁综合
-https://1yp7hc5p.live.sxmty.com/live/hls/bff8529922344209985b6e49baa9555a/efa2543628fc4a7ea93d3d6c975f77dc-1.m3u8
 #EXTINF:-1 tvg-id="敦化一套" tvg-name="敦化一套" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/敦化一套.png",敦化一套
 http://stream8.jlntv.cn/dhtv/playlist.m3u8
 #EXTINF:-1 tvg-id="新沂新闻" tvg-name="新沂新闻" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/新沂新闻.png",新沂新闻
@@ -235,6 +233,8 @@ http://120.234.44.98:18180/TV00000000000000000088@HHZT
 http://120.76.248.139/live/bfgd/4200000282.m3u8
 #EXTINF:-1 tvg-id="来宾综合" tvg-name="来宾综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/来宾综合.png",来宾综合
 http://zb.gxlbamc.com:1935/live/lbzh.stream/playlist.m3u8
+#EXTINF:-1 tvg-id="松潘新闻综合" tvg-name="松潘新闻综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/松潘新闻综合.png",松潘新闻综合
+http://live.spccmc.com:90/live/spxwzh.m3u8
 #EXTINF:-1 tvg-id="松阳综合" tvg-name="松阳综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/松阳综合.png",松阳综合
 http://l.cztvcloud.com/channels/lantian/SXsongyang1/720p.m3u8?zzhed?
 #EXTINF:-1 tvg-id="柳河" tvg-name="柳河" group-title="地方台" tvg-logo="https://tb.zbds.top/logo/柳河.png",柳河
@@ -285,12 +285,12 @@ http://218.84.127.245:1026/hls/main1/playlist.m3u8?zxinjd,
 http://120.76.248.139/live/bfgd/4200000147.m3u8
 #EXTINF:-1 tvg-id="珲春新闻" tvg-name="珲春新闻" group-title="地方台" tvg-logo="https://tb.zbds.top/logo/珲春新闻.png",珲春新闻
 http://stream8.jlntv.cn/hctv/sd/live.m3u8?zjild
-#EXTINF:-1 tvg-id="璧山综合" tvg-name="璧山综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/璧山综合.png",璧山综合
-http://222.179.42.129:8181/hls1.m3u8
 #EXTINF:-1 tvg-id="甘南县综合" tvg-name="甘南县综合" group-title="地方台" tvg-logo="https://livecdn.zbds.org/logo/甘南县综合.png",甘南县综合
 https://stream.hrbtv.net/zxpd/sd/live.m3u8
 #EXTINF:-1 tvg-id="白山公共" tvg-name="白山公共" group-title="地方台" tvg-logo="https://tb.zbds.top/logo/白山公共.png",白山公共
 http://stream8.jlntv.cn/baishan2/playlist.m3u8?zjild
+#EXTINF:-1 tvg-id="白银综合" tvg-name="白银综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/白银综合.png",白银综合
+http://play.kankanlive.com/live/1720408089419110.m3u8
 #EXTINF:-1 tvg-id="磐石" tvg-name="磐石" group-title="地方台" tvg-logo="https://tb.zbds.top/logo/磐石.png",磐石
 http://stream5.jlntv.cn/ps/sd/live.m3u8?zjild
 #EXTINF:-1 tvg-id="祁门综合" tvg-name="祁门综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/祁门综合.png",祁门综合
@@ -339,6 +339,8 @@ https://liveout.xntv.tv/a65jur/96iln2.m3u8?zqinghd
 http://112.46.105.20:8009/hls/28/index.m3u8
 #EXTINF:-1 tvg-id="西安都市" tvg-name="西安都市" group-title="地方台" tvg-logo="https://live.fanmingming.cn/tv/西安都市.png",西安都市
 http://112.46.105.20:8009/hls/29/index.m3u8
+#EXTINF:-1 tvg-id="西峰综合" tvg-name="西峰综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/西峰综合.png",西峰综合
+https://play.kankanlive.com/live/1683944827526991.m3u8
 #EXTINF:-1 tvg-id="诸暨新闻综合" tvg-name="诸暨新闻综合" group-title="地方台" tvg-logo="https://www.xn--rgv465a.top/tvlogo/诸暨新闻综合.png",诸暨新闻综合
 https://l.cztvcloud.com/channels/lantian/SXzhuji3/720p.m3u8
 #EXTINF:-1 tvg-id="象山新闻综合" tvg-name="象山新闻综合" group-title="地方台" tvg-logo="https://live.fanmingming.cn/tv/象山新闻综合.png",象山新闻综合
