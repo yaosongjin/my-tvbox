@@ -1,7 +1,8 @@
 {
   "candidates": [
-    {"name": "芒果资源", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/", "searchable": 0},
-    {"name": "红牛资源", "api": "https://hongniuzy2.com/api.php/provide/vod/"},
-    {"name": "百度资源", "api": "https://api.apibdzy.com/api.php/provide/vod/"}
+    {"name": "小肥羊的点播台", "key": "sbe0af2", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/", "searchable": 0},
+    {"name": "芒果资源", "key": "sbe0afm", "api": "https://caiji.mgzyapi.com/api.php/provide/vod/", "searchable": 1},
+    {"name": "红牛资源", "key": "s994685", "api": "https://hongniuzy2.com/api.php/provide/vod/"},
+    {"name": "百度资源", "key": "sef763a", "api": "https://api.apibdzy.com/api.php/provide/vod/"}
   ]
 }
