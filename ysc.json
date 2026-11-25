@@ -4,22 +4,6 @@
   "spider": "",
   "sites": [
     {
-      "key": "sbe0af2",
-      "name": "小肥羊的点播台",
-      "type": 1,
-      "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
-      "searchable": 0,
-      "filterable": 1
-    },
-    {
-      "key": "sbe0afm",
-      "name": "芒果资源",
-      "type": 1,
-      "api": "https://caiji.mgzyapi.com/api.php/provide/vod/",
-      "searchable": 1,
-      "filterable": 1
-    },
-    {
       "key": "s994685",
       "name": "红牛资源",
       "type": 1,
