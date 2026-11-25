@@ -33,7 +33,7 @@
     {
       "name": "小肥羊的直播",
       "type": 0,
-      "url": "https://gh-proxy.com/https://raw.githubusercontent.com/yaosongjin/my-tvbox/main/live.m3u",
+      "url": "https://gh-proxy.com/https://raw.githubusercontent.com/yaosongjin/my-tvbox/main/live.txt",
       "playerType": 1,
       "epg": "https://epg.pw/xmltv/epg_CN.xml"
     }
