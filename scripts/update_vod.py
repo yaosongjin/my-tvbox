@@ -166,9 +166,28 @@ def main():
     with cf.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         ok_map = dict(ex.map(probe, apis))
 
+    # 标题站兜底（2026-11-25 用户两次纠正后定的方案）。
+    #
+    # 背景：影视仓首页左上角的标题取 sites[0].name，没有独立的标题字段。而标题站
+    # 同时也是首页数据源，它自己的接口一挂，就会被下面的 DEAD 逻辑删掉，标题跟着消失。
+    #
+    # 我一开始的做法是"把标题站改挂到另一个看起来更稳的站"—— 用户直接指出这是
+    # 换汤不换药：明天那个站挂了照样没标题。所以现在改成"不绑定任何特定站"：
+    # 标了 title:true 的站，自己的接口没探通时，自动借用本轮第一个探通的 api。
+    #   - 名字、key 都不变 → 标题永远是「小肥羊的点播台」
+    #   - 首页内容跟着借用对象走 → 至少有片可看，不会空白
+    #   - 它自己的接口恢复后，下一轮自动用回自己的，不需要人工改回来
+    # 它 searchable=0，不参与搜索，所以借用的 api 与搜索页里的同名站不会冲突。
+    fallback_api = next(
+        (c["api"] for c in cands if ok_map.get(c["api"], (False, None))[0]), None)
+
     sites = []
     for c in cands:
         ok, probe_url = ok_map.get(c["api"], (False, None))
+        api = c["api"]
+        if not ok and c.get("title") and fallback_api:
+            log(f"TITLE {c.get('name')} 自己的接口未通，借用 {fallback_api} 保住首页标题")
+            api, probe_url, ok = fallback_api, f"{fallback_api} (借用)", True
         # 通不了就不写进配置（用户 2026-11-25 明确）：
         #   "不通的时候就不该显示，通了再显示就行"
         # 所以这里没有 keep 之类的豁免 —— 探不通的站当天就从搜索页消失，
@@ -178,12 +197,14 @@ def main():
             continue
         name = c.get("name") or c["api"]
         # key 带上站名：同一 api 的两个站名必须是两个不同的 key，
-        # 否则后一个会把前一个覆盖掉
+        # 否则后一个会把前一个覆盖掉。
+        # 注意用 c["api"] 而不是 api 算 key：借用兜底时 api 会变，key 不能跟着变，
+        # 否则 APP 里这个站的收藏/历史会失效。
         sites.append({
             "key": c.get("key") or make_key(c["api"] + "|" + name),
             "name": name,
             "type": 1,
-            "api": c["api"],
+            "api": api,
             # searchable=0：这个站只做首页数据源，不参与聚合搜索。
             # 用户 2026-11-25 要求"首页左上角仍显示小肥羊的点播台，但搜索页
             # 别出现它" —— 就是这个开关。不影响点开、不影响播放，只让它在
