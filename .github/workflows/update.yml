@@ -2,7 +2,7 @@ name: auto-update
 
 on:
   schedule:
-    - cron: '30 21 * * *'
+    - cron: '18 21 * * *'
   workflow_dispatch:
 
 concurrency:
