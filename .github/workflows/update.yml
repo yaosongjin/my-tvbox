@@ -3,15 +3,13 @@ name: auto-update
 on:
   schedule:
     # 主时间：UTC 21:30 = 北京次日 05:30
-    - cron: '30 21 * * *'
-    # 备用时间：UTC 02:25 = 北京 10:25。
-    # 2026-11-28 查过：建仓至今 40 条提交里，落在 21:30 UTC 之后窗口的是 0 条，
-    # 说明 GitHub 侧的定时触发一次都没兑现（不是配置写错，workflow 状态是 active、
-    # 仓库非 fork 未归档、手动 workflow_dispatch 正常）。schedule 官方定义是
-    # best-effort，高峰期会延迟或直接丢弃且不留记录。
-    # 这条的作用有两个：a) 今天就能验证 schedule 到底能不能通（提交后 30 分钟内见分晓）；
-    # b) 长期当兜底，夜里那次被丢了，上午还有一次。跑两次无害（产物覆盖，内容相同）。
-    - cron: '10 3 * * *'
+    #
+    # 2026-11-28 排查记录：这个 schedule 在 GitHub 侧从未被真正调度过
+    # （建仓至今 40 条提交里落在该时间窗口的是 0 条，API 按 event=schedule
+    # 过滤总数也是 0；workflow 状态 active、仓库非 fork 未归档、账号正常、
+    # Disable→Enable 重新注册也无效、手动 workflow_dispatch 每次都正常）。
+    # 目前靠手动 Run 维持，这部分配置保留不动，将来若恢复调度可直接生效。
+    - cron: '18 21 * * *'
   workflow_dispatch:
 
 concurrency:
